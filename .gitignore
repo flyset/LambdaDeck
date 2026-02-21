@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtualenvs
+.venv/
+venv/
+ENV/
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+requirements.txt
+requirements.lock.txt
+
+# Packaging/build
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Core ML artifacts (often huge)
+*.mlmodelc/
+*.mlpackage/
+*.mlmodel
+
+# Model distributions (very large)
+anemll-*/
