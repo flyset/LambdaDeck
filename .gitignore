@@ -42,3 +42,8 @@ anemll-*/
 
 # LambdaDeck local model root (very large; local-only)
 Models/
+
+# OpenCode (local editor/runtime config)
+.opencode/
+opencode.json
+opencode.jsonc
