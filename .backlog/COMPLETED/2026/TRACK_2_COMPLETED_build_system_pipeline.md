@@ -1,4 +1,4 @@
-# TRACK 2 [DRAFT]: build_system_pipeline
+# TRACK 2 [COMPLETED]: build_system_pipeline
 
 Problems (PORE)
 - P1: As a developer, I cannot implement Track 1, because LambdaDeck does not yet have a Swift build system/project scaffold (SwiftPM targets, entrypoints, and dependencies) to compile and run a server.
@@ -38,35 +38,45 @@ Non-negotiables
 - CI must remain model-less.
 
 Milestones
-- [ ] Milestone 1: SwiftPM scaffold + `lambdadeck` CLI target.
-- [ ] Milestone 2: CI on GitHub Actions (macOS) with build + tests.
-- [ ] Milestone 3: Release artifact path documented (and optionally automated).
-- [ ] Milestone 4: Developer docs: build/run/test golden path.
+- [x] Milestone 1: SwiftPM scaffold + `lambdadeck` CLI target.
+- [x] Milestone 2: CI on GitHub Actions (macOS) with build + tests.
+- [x] Milestone 3: Release artifact path documented (and optionally automated).
+- [x] Milestone 4: Developer docs: build/run/test golden path.
 
 Risks / decisions
 - Risk: Mixing SwiftPM + Xcode app targets later can complicate structure if not planned.
 - Decision: v1 is headless/manual CLI; pipeline optimizes for CLI + server tests first.
 - Decision: Keep CI model-less; use stub mode for integration/contract tests when Track 1 introduces them.
+- Decision: Use three SwiftPM targets now (`LambdaDeckCore`, `LambdaDeckCLI`, test targets including integration/contract tests) and keep HTTP server wiring for Track 1.
 
 Plan (execution steps)
-- [ ] Move Track 2 to ACTIVE (folder + filename + title status).
-- [ ] Decide SwiftPM target/module layout and naming conventions.
-- [ ] Create initial `Package.swift` + `lambdadeck` executable skeleton.
-- [ ] Add minimal CLI parsing + `--help`/`--version` behaviors (with tests).
-- [ ] Add GitHub Actions workflow for macOS build + tests.
-- [ ] Document local dev commands in one canonical place.
-- [ ] Define release artifact method (manual steps first; automation optional).
-- [ ] Move Track 2 to COMPLETED and capture completion notes.
+- [x] Move Track 2 to ACTIVE (folder + filename + title status).
+- [x] Decide SwiftPM target/module layout and naming conventions.
+- [x] Create initial `Package.swift` + `lambdadeck` executable skeleton.
+- [x] Add minimal CLI parsing + `--help`/`--version` behaviors (with tests).
+- [x] Add GitHub Actions workflow for macOS build + tests.
+- [x] Document local dev commands in one canonical place.
+- [x] Define release artifact method (manual steps first; automation optional).
+- [x] Move Track 2 to COMPLETED and capture completion notes.
 
 Inventory
 - **Current inventory**
-  - Governance: `.backlog/README.md`, `.backlog/PORE.md`, `.backlog/AGENTS.md`.
-  - Track 1: `.backlog/DRAFT/2026/TRACK_1_DRAFT_coreml_openai_server.md`.
-  - Repo hygiene: `.gitignore` ignores `Models/` (and legacy `anemll-*/`) plus common build caches.
-  - Model artifacts: local-only bundles under `Models/<model>/`.
+  - Build scaffold: `Package.swift`.
+  - Runtime modules: `Sources/LambdaDeckCore/LambdaDeckVersion.swift`, `Sources/LambdaDeckCore/StubContract.swift`, `Sources/LambdaDeckCLI/CLI.swift`, `Sources/LambdaDeckCLI/LambdaDeckMain.swift`.
+  - Validation/tests: `Tests/LambdaDeckCoreTests/LambdaDeckCoreTests.swift`, `Tests/LambdaDeckCLITests/LambdaDeckCLITests.swift`, `Tests/LambdaDeckIntegrationTests/StubContractIntegrationTests.swift`.
+  - CI: `.github/workflows/ci.yml`.
+  - Developer/release docs: `docs/DEVELOPMENT.md`.
+  - Repo hygiene: `.gitignore` ignores `Models/`, legacy `anemll-*/`, and `.build/`.
 
 Artifacts
-- CI runs, release notes, and build docs will be listed here.
+- Local validation run (2026-02-21): `swift build && swift test && swift run lambdadeck --help && swift run lambdadeck --version && swift run lambdadeck --stub-contract`.
+- Release build validation (2026-02-21): `swift build -c release`.
+- CI workflow added: `.github/workflows/ci.yml`.
+- Golden-path and release artifact docs: `docs/DEVELOPMENT.md`.
 
 Completion notes (fill when COMPLETED/DEPRECATED)
-- Pending.
+- Delivered SwiftPM scaffold (`Package.swift`) with `lambdadeck` executable + core library targets.
+- Added model-less contract/integration hook (`--stub-contract`) to support Track 1 stub-mode testing.
+- Added macOS GitHub Actions CI (`.github/workflows/ci.yml`) running `swift build` + `swift test`.
+- Added canonical dev and release instructions (`docs/DEVELOPMENT.md`); CI and local flows remain model-less.
+- Validations run (2026-02-21): `swift build`, `swift test`, `swift run lambdadeck --help/--version/--stub-contract`, `swift build -c release`.

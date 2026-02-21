@@ -24,6 +24,7 @@ requirements.lock.txt
 build/
 dist/
 *.egg-info/
+.build/
 
 # Jupyter
 .ipynb_checkpoints/
