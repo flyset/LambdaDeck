@@ -36,6 +36,28 @@ curl -N -H "content-type: application/json" \
   http://127.0.0.1:8080/v1/chat/completions
 ```
 
+## Run local server (real inference)
+
+Use a local ANEMLL bundle path when model artifacts are available:
+
+```bash
+swift run lambdadeck serve --model-path "Models/<bundle-dir-or-mlmodelc>" --port 8080
+```
+
+Example checks:
+
+```bash
+curl http://127.0.0.1:8080/v1/models
+
+curl -H "content-type: application/json" \
+  -d '{"model":"<resolved-model-id>","messages":[{"role":"user","content":"Say hello in one short sentence."}],"max_tokens":16,"stream":false}' \
+  http://127.0.0.1:8080/v1/chat/completions
+
+curl -N -H "content-type: application/json" \
+  -d '{"model":"<resolved-model-id>","messages":[{"role":"user","content":"Count to three."}],"max_tokens":16,"stream":true}' \
+  http://127.0.0.1:8080/v1/chat/completions
+```
+
 ## Model selection precedence
 
 When not using `--stub`, model selection order is:
@@ -61,6 +83,12 @@ This emits a stable OpenAI-shaped `chat.completion` JSON payload and is safe to 
 - Workflow: `.github/workflows/ci.yml`
 - Trigger: every push and pull request.
 - Jobs: `swift build` + `swift test` on `macos-latest`.
+
+Local-only real-inference integration checks are gated in tests and skipped unless:
+
+```bash
+LAMBDADECK_REAL_MODEL_PATH="Models/<bundle-dir-or-mlmodelc>" swift test
+```
 
 ## Manual release artifact (minimum viable flow)
 

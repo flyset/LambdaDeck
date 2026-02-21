@@ -111,6 +111,80 @@ final class LambdaDeckCoreTests: XCTestCase {
         }
     }
 
+    func testRuntimeInspectorDetectsGemma3ChunkedBundle() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("gemma-bundle")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+
+            let meta = """
+            model_info:
+              architecture: gemma3
+              parameters:
+                context_length: 4096
+                batch_size: 64
+                sliding_window: 1024
+                embeddings: gemma3_embeddings.mlmodelc
+                lm_head: gemma3_lm_head.mlmodelc
+                ffn: gemma3_FFN_PF_chunk_01of02.mlmodelc
+            """
+            try meta.write(to: bundle.appendingPathComponent("meta.yaml"), atomically: true, encoding: .utf8)
+
+            _ = try createModelDirectory(named: "gemma3_embeddings.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "gemma3_lm_head.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "gemma3_FFN_PF_chunk_01of02.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "gemma3_FFN_PF_chunk_02of02.mlmodelc", in: bundle)
+
+            let inventory = try LambdaDeckRuntimeInspector.inspect(modelPath: bundle.path)
+
+            XCTAssertEqual(inventory.adapterKind, .gemma3Chunked)
+            XCTAssertEqual(inventory.contextLength, 4096)
+            XCTAssertEqual(inventory.slidingWindow, 1024)
+            XCTAssertEqual(inventory.ffnChunkPaths.count, 2)
+            XCTAssertEqual(inventory.ffnChunkPaths[0].lastPathComponent, "gemma3_FFN_PF_chunk_01of02.mlmodelc")
+            XCTAssertEqual(inventory.ffnChunkPaths[1].lastPathComponent, "gemma3_FFN_PF_chunk_02of02.mlmodelc")
+        }
+    }
+
+    func testRuntimeInspectorDetectsSingleCompiledModelPath() throws {
+        try withTemporaryDirectory { directory in
+            try createTokenizerAssets(in: directory)
+            let modelPath = try createModelDirectory(named: "monolithic.mlmodelc", in: directory)
+
+            let inventory = try LambdaDeckRuntimeInspector.inspect(modelPath: modelPath.path)
+
+            XCTAssertEqual(inventory.adapterKind, .monolithicCompiled)
+            XCTAssertEqual(inventory.monolithicModelPath?.lastPathComponent, "monolithic.mlmodelc")
+        }
+    }
+
+    func testStubInferenceRuntimeIsDeterministic() async throws {
+        let runtime = StubInferenceRuntime()
+        let request = OpenAIChatCompletionsRequest(
+            model: "any",
+            messages: [OpenAIChatMessage(role: "user", content: "hello")],
+            stream: false
+        )
+
+        let completion = try await runtime.complete(request: request)
+        XCTAssertEqual(completion.content, StubChatFixtures.completionText)
+        XCTAssertEqual(completion.finishReason, "stop")
+
+        var streamedTokens: [String] = []
+        var finishReason: String?
+        for try await event in runtime.stream(request: request) {
+            switch event {
+            case .token(let token):
+                streamedTokens.append(token)
+            case .finished(let reason, _):
+                finishReason = reason
+            }
+        }
+
+        XCTAssertEqual(streamedTokens.joined(), StubChatFixtures.completionText)
+        XCTAssertEqual(finishReason, "stop")
+    }
+
     private func withTemporaryDirectory(_ operation: (URL) throws -> Void) throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("LambdaDeckTests-\(UUID().uuidString)")
@@ -127,5 +201,50 @@ final class LambdaDeckCoreTests: XCTestCase {
         let meta = bundle.appendingPathComponent("meta.yaml")
         try "model_info:\n  name: \(name)\n".write(to: meta, atomically: true, encoding: .utf8)
         return bundle
+    }
+
+    private func createModelDirectory(named name: String, in root: URL) throws -> URL {
+        let path = root.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        return path
+    }
+
+    private func createTokenizerAssets(in root: URL) throws {
+        let tokenizerJSON = """
+        {
+          "model": {
+            "vocab": {
+              "<unk>": 0,
+              "<bos>": 1,
+              "<eos>": 2,
+              "<start_of_turn>": 3,
+              "<end_of_turn>": 4,
+              "▁": 5,
+              "A": 6,
+              "B": 7,
+              "<0x41>": 8,
+              "<0x42>": 9
+            },
+            "merges": []
+          }
+        }
+        """
+        let tokenizerConfig = """
+        {
+          "bos_token": "<bos>",
+          "eos_token": "<eos>"
+        }
+        """
+
+        try tokenizerJSON.write(
+            to: root.appendingPathComponent("tokenizer.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try tokenizerConfig.write(
+            to: root.appendingPathComponent("tokenizer_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
     }
 }

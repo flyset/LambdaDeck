@@ -5,6 +5,7 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
     public let host: String
     public let port: Int
     public let resolvedModel: LambdaDeckResolvedModel
+    public let inferenceRuntime: (any LambdaDeckInferenceRuntime)?
     public let maxRequestBodyBytes: Int
     public let streamChunkDelayNanoseconds: UInt64
 
@@ -12,14 +13,25 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
         host: String,
         port: Int,
         resolvedModel: LambdaDeckResolvedModel,
+        inferenceRuntime: (any LambdaDeckInferenceRuntime)? = nil,
         maxRequestBodyBytes: Int = 2_000_000,
         streamChunkDelayNanoseconds: UInt64 = 0
     ) {
         self.host = host
         self.port = port
         self.resolvedModel = resolvedModel
+        self.inferenceRuntime = inferenceRuntime
         self.maxRequestBodyBytes = maxRequestBodyBytes
         self.streamChunkDelayNanoseconds = streamChunkDelayNanoseconds
+    }
+
+    public static func == (lhs: LambdaDeckServerConfiguration, rhs: LambdaDeckServerConfiguration) -> Bool {
+        lhs.host == rhs.host
+            && lhs.port == rhs.port
+            && lhs.resolvedModel == rhs.resolvedModel
+            && ((lhs.inferenceRuntime == nil) == (rhs.inferenceRuntime == nil))
+            && lhs.maxRequestBodyBytes == rhs.maxRequestBodyBytes
+            && lhs.streamChunkDelayNanoseconds == rhs.streamChunkDelayNanoseconds
     }
 }
 
@@ -34,10 +46,12 @@ public enum LambdaDeckServerBootstrap {
             environment: environment,
             currentDirectory: currentDirectory
         )
+        let inferenceRuntime = try LambdaDeckRuntimeFactory.makeRuntime(resolvedModel: resolvedModel)
         return LambdaDeckServerConfiguration(
             host: options.host,
             port: options.port,
-            resolvedModel: resolvedModel
+            resolvedModel: resolvedModel,
+            inferenceRuntime: inferenceRuntime
         )
     }
 }
@@ -57,6 +71,7 @@ public enum LambdaDeckServer {
     ) -> some ApplicationProtocol {
         let router = Router()
         let modelID = configuration.resolvedModel.modelID
+        let inferenceRuntime = configuration.inferenceRuntime
 
         router.get("v1/models") { _, _ async -> Response in
             jsonResponse(
@@ -69,6 +84,7 @@ public enum LambdaDeckServer {
             await handleChatCompletions(
                 request: request,
                 modelID: modelID,
+                runtime: inferenceRuntime,
                 maxRequestBodyBytes: configuration.maxRequestBodyBytes,
                 streamChunkDelayNanoseconds: configuration.streamChunkDelayNanoseconds
             )
@@ -87,6 +103,7 @@ public enum LambdaDeckServer {
     static func handleChatCompletions(
         request: Request,
         modelID: String,
+        runtime: (any LambdaDeckInferenceRuntime)?,
         maxRequestBodyBytes: Int,
         streamChunkDelayNanoseconds: UInt64
     ) async -> Response {
@@ -106,10 +123,50 @@ public enum LambdaDeckServer {
             }
 
             if chatRequest.stream == true {
+                if let runtime {
+                    return streamingResponse(
+                        modelID: modelID,
+                        request: chatRequest,
+                        runtime: runtime,
+                        streamChunkDelayNanoseconds: streamChunkDelayNanoseconds
+                    )
+                }
                 return streamingResponse(
                     modelID: modelID,
                     streamChunkDelayNanoseconds: streamChunkDelayNanoseconds
                 )
+            }
+
+            if let runtime {
+                do {
+                    let completion = try await runtime.complete(request: chatRequest)
+                    return jsonResponse(
+                        status: .ok,
+                        payload: OpenAIChatCompletionResponse(
+                            id: "chatcmpl-\(UUID().uuidString.lowercased())",
+                            object: "chat.completion",
+                            created: Int(Date().timeIntervalSince1970),
+                            model: modelID,
+                            choices: [
+                                OpenAIChatCompletionChoice(
+                                    index: 0,
+                                    message: OpenAIChatMessage(role: "assistant", content: completion.content),
+                                    finishReason: completion.finishReason
+                                )
+                            ],
+                            usage: completion.usage
+                        )
+                    )
+                } catch let runtimeError as LambdaDeckRuntimeError {
+                    switch runtimeError {
+                    case .invalidRequest(let message):
+                        return invalidRequestResponse(message)
+                    default:
+                        return internalErrorResponse(runtimeError.localizedDescription)
+                    }
+                } catch {
+                    return internalErrorResponse("runtime inference failed")
+                }
             }
 
             return jsonResponse(
@@ -142,6 +199,32 @@ public enum LambdaDeckServer {
         return Response(status: .ok, headers: headers, body: body)
     }
 
+    static func streamingResponse(
+        modelID: String,
+        request: OpenAIChatCompletionsRequest,
+        runtime: any LambdaDeckInferenceRuntime,
+        streamChunkDelayNanoseconds: UInt64
+    ) -> Response {
+        var headers = HTTPFields()
+        headers[.contentType] = "text/event-stream"
+        headers[.cacheControl] = "no-cache"
+        headers[.connection] = "keep-alive"
+
+        let body = ResponseBody { writer in
+            do {
+                try await SSEEventWriter.writeRuntimeStream(
+                    runtimeStream: runtime.stream(request: request),
+                    modelID: modelID,
+                    chunkDelayNanoseconds: streamChunkDelayNanoseconds,
+                    writer: &writer
+                )
+            } catch {
+                return
+            }
+        }
+        return Response(status: .ok, headers: headers, body: body)
+    }
+
     static func invalidRequestResponse(_ message: String) -> Response {
         jsonResponse(
             status: .badRequest,
@@ -149,6 +232,18 @@ public enum LambdaDeckServer {
                 error: OpenAIErrorBody(
                     message: message,
                     type: "invalid_request_error"
+                )
+            )
+        )
+    }
+
+    static func internalErrorResponse(_ message: String) -> Response {
+        jsonResponse(
+            status: .internalServerError,
+            payload: OpenAIErrorResponse(
+                error: OpenAIErrorBody(
+                    message: message,
+                    type: "server_error"
                 )
             )
         )
@@ -191,5 +286,116 @@ enum SSEEventWriter {
             try await writer.write(buffer)
         }
         try await writer.finish(nil)
+    }
+
+    static func writeRuntimeStream(
+        runtimeStream: AsyncThrowingStream<LambdaDeckRuntimeStreamEvent, Error>,
+        modelID: String,
+        chunkDelayNanoseconds: UInt64,
+        writer: inout any ResponseBodyWriter
+    ) async throws {
+        let completionID = "chatcmpl-\(UUID().uuidString.lowercased())"
+        let created = Int(Date().timeIntervalSince1970)
+
+        let roleChunk = OpenAIChatCompletionChunk(
+            id: completionID,
+            object: "chat.completion.chunk",
+            created: created,
+            model: modelID,
+            choices: [
+                OpenAIChatCompletionChunkChoice(
+                    index: 0,
+                    delta: OpenAIChatCompletionChunkDelta(role: "assistant"),
+                    finishReason: nil
+                )
+            ]
+        )
+        try await writeSingleChunk(
+            roleChunk,
+            chunkDelayNanoseconds: chunkDelayNanoseconds,
+            writer: &writer
+        )
+
+        for try await event in runtimeStream {
+            try Task.checkCancellation()
+
+            switch event {
+            case .token(let token):
+                guard !token.isEmpty else {
+                    continue
+                }
+                let contentChunk = OpenAIChatCompletionChunk(
+                    id: completionID,
+                    object: "chat.completion.chunk",
+                    created: created,
+                    model: modelID,
+                    choices: [
+                        OpenAIChatCompletionChunkChoice(
+                            index: 0,
+                            delta: OpenAIChatCompletionChunkDelta(content: token),
+                            finishReason: nil
+                        )
+                    ]
+                )
+                try await writeSingleChunk(
+                    contentChunk,
+                    chunkDelayNanoseconds: chunkDelayNanoseconds,
+                    writer: &writer
+                )
+            case .finished(let finishReason, _):
+                let terminalChunk = OpenAIChatCompletionChunk(
+                    id: completionID,
+                    object: "chat.completion.chunk",
+                    created: created,
+                    model: modelID,
+                    choices: [
+                        OpenAIChatCompletionChunkChoice(
+                            index: 0,
+                            delta: OpenAIChatCompletionChunkDelta(),
+                            finishReason: finishReason
+                        )
+                    ]
+                )
+                try await writeSingleChunk(
+                    terminalChunk,
+                    chunkDelayNanoseconds: chunkDelayNanoseconds,
+                    writer: &writer
+                )
+            }
+        }
+
+        try await writeSingleEvent(
+            "data: [DONE]\n\n",
+            chunkDelayNanoseconds: chunkDelayNanoseconds,
+            writer: &writer
+        )
+        try await writer.finish(nil)
+    }
+
+    private static func writeSingleChunk(
+        _ chunk: OpenAIChatCompletionChunk,
+        chunkDelayNanoseconds: UInt64,
+        writer: inout any ResponseBodyWriter
+    ) async throws {
+        let payload = try OpenAIJSON.encodeToString(chunk)
+        try await writeSingleEvent(
+            "data: \(payload)\n\n",
+            chunkDelayNanoseconds: chunkDelayNanoseconds,
+            writer: &writer
+        )
+    }
+
+    private static func writeSingleEvent(
+        _ event: String,
+        chunkDelayNanoseconds: UInt64,
+        writer: inout any ResponseBodyWriter
+    ) async throws {
+        try Task.checkCancellation()
+        if chunkDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: chunkDelayNanoseconds)
+        }
+        var buffer = ByteBufferAllocator().buffer(capacity: event.utf8.count)
+        buffer.writeString(event)
+        try await writer.write(buffer)
     }
 }

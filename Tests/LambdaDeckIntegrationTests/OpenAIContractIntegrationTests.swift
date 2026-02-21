@@ -160,6 +160,142 @@ final class OpenAIContractIntegrationTests: XCTestCase {
         XCTAssertEqual(writer.writeCount, 1)
     }
 
+    func testChatCompletionsNonStreamUsesRuntimeWhenConfigured() async throws {
+        let runtime = TestRuntime(
+            completion: LambdaDeckRuntimeCompletion(
+                content: "Real runtime response.",
+                finishReason: "stop",
+                usage: OpenAIUsage(promptTokens: 10, completionTokens: 3, totalTokens: 13)
+            ),
+            streamTokens: ["Real ", "runtime ", "stream."],
+            finishReason: "stop",
+            usage: OpenAIUsage(promptTokens: 10, completionTokens: 3, totalTokens: 13)
+        )
+        let configuration = LambdaDeckServerConfiguration(
+            host: "127.0.0.1",
+            port: 8080,
+            resolvedModel: LambdaDeckResolvedModel(
+                modelID: "real-model",
+                modelPath: "/tmp/real-model",
+                source: .cliModelPath
+            ),
+            inferenceRuntime: runtime
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+        let requestBody = try chatRequestBody(
+            OpenAIChatCompletionsRequest(
+                model: "real-model",
+                messages: [OpenAIChatMessage(role: "user", content: "Say hello")],
+                stream: false
+            )
+        )
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(
+                uri: "/v1/chat/completions",
+                method: .post,
+                headers: [.contentType: "application/json"],
+                body: requestBody
+            )
+
+            XCTAssertEqual(response.status, .ok)
+            let payload = try JSONDecoder().decode(OpenAIChatCompletionResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.model, "real-model")
+            XCTAssertEqual(payload.choices.first?.message.role, "assistant")
+            XCTAssertEqual(payload.choices.first?.message.content, "Real runtime response.")
+            XCTAssertEqual(payload.choices.first?.finishReason, "stop")
+            XCTAssertEqual(payload.usage, OpenAIUsage(promptTokens: 10, completionTokens: 3, totalTokens: 13))
+        }
+    }
+
+    func testChatCompletionsStreamUsesRuntimeWhenConfigured() async throws {
+        let runtime = TestRuntime(
+            completion: LambdaDeckRuntimeCompletion(
+                content: "unused",
+                finishReason: "stop",
+                usage: OpenAIUsage(promptTokens: 0, completionTokens: 0, totalTokens: 0)
+            ),
+            streamTokens: ["Alpha", " Beta"],
+            finishReason: "stop",
+            usage: OpenAIUsage(promptTokens: 7, completionTokens: 2, totalTokens: 9)
+        )
+        let configuration = LambdaDeckServerConfiguration(
+            host: "127.0.0.1",
+            port: 8080,
+            resolvedModel: LambdaDeckResolvedModel(
+                modelID: "real-model",
+                modelPath: "/tmp/real-model",
+                source: .cliModelPath
+            ),
+            inferenceRuntime: runtime
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+        let requestBody = try chatRequestBody(
+            OpenAIChatCompletionsRequest(
+                model: "real-model",
+                messages: [OpenAIChatMessage(role: "user", content: "Stream")],
+                stream: true
+            )
+        )
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(
+                uri: "/v1/chat/completions",
+                method: .post,
+                headers: [.contentType: "application/json"],
+                body: requestBody
+            )
+
+            XCTAssertEqual(response.status, .ok)
+            XCTAssertEqual(response.headers[.contentType], "text/event-stream")
+
+            let events = string(from: response.body)
+                .components(separatedBy: "\n\n")
+                .filter { !$0.isEmpty }
+
+            XCTAssertEqual(events.count, 5)
+            XCTAssertEqual(events.last, "data: [DONE]")
+            XCTAssertTrue(events[1].contains("\"content\":\"Alpha\""))
+            XCTAssertTrue(events[2].contains("\"content\":\" Beta\""))
+            XCTAssertTrue(events[3].contains("\"finish_reason\":\"stop\""))
+        }
+    }
+
+    func testLocalOnlyRealInferenceHarnessSkipsWithoutModelPath() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let modelPath = environment["LAMBDADECK_REAL_MODEL_PATH"], !modelPath.isEmpty else {
+            throw XCTSkip("Set LAMBDADECK_REAL_MODEL_PATH to run local real-inference integration checks")
+        }
+
+        let configuration = try LambdaDeckServerBootstrap.resolveConfiguration(
+            options: LambdaDeckServeOptions(modelPath: modelPath)
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+        let requestBody = try chatRequestBody(
+            OpenAIChatCompletionsRequest(
+                model: configuration.resolvedModel.modelID,
+                messages: [OpenAIChatMessage(role: "user", content: "Reply in five words.")],
+                maxTokens: 16,
+                stream: false
+            )
+        )
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(
+                uri: "/v1/chat/completions",
+                method: .post,
+                headers: [.contentType: "application/json"],
+                body: requestBody
+            )
+
+            XCTAssertEqual(response.status, .ok)
+            let payload = try JSONDecoder().decode(OpenAIChatCompletionResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.model, configuration.resolvedModel.modelID)
+            XCTAssertFalse(payload.choices[0].message.content.isEmpty)
+            XCTAssertNotEqual(payload.choices[0].message.content, StubChatFixtures.completionText)
+        }
+    }
+
     private func chatRequestBody(_ request: OpenAIChatCompletionsRequest) throws -> ByteBuffer {
         let data = try JSONEncoder().encode(request)
         var buffer = ByteBufferAllocator().buffer(capacity: data.count)
@@ -174,6 +310,27 @@ final class OpenAIContractIntegrationTests: XCTestCase {
 
     private func string(from buffer: ByteBuffer) -> String {
         String(decoding: data(from: buffer), as: UTF8.self)
+    }
+}
+
+private struct TestRuntime: LambdaDeckInferenceRuntime {
+    let completion: LambdaDeckRuntimeCompletion
+    let streamTokens: [String]
+    let finishReason: String
+    let usage: OpenAIUsage
+
+    func complete(request: OpenAIChatCompletionsRequest) async throws -> LambdaDeckRuntimeCompletion {
+        self.completion
+    }
+
+    func stream(request: OpenAIChatCompletionsRequest) -> AsyncThrowingStream<LambdaDeckRuntimeStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            for token in self.streamTokens {
+                continuation.yield(.token(token))
+            }
+            continuation.yield(.finished(finishReason: self.finishReason, usage: self.usage))
+            continuation.finish()
+        }
     }
 }
 

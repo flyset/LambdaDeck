@@ -4,7 +4,8 @@ LambdaDeck is a local, on-device LLM runtime/server effort. The near-term goal i
 
 Status:
 - Build + test pipeline (SwiftPM + CI) is in place.
-- OpenAI-compatible server endpoints are planned under Track 1.
+- OpenAI-compatible `/v1/models` and `/v1/chat/completions` (non-stream + SSE) are implemented.
+- Swift Core ML runtime integration is available for local model bundles via `--model-path`.
 
 ## Repo layout
 
@@ -39,4 +40,5 @@ Put local model bundles under `Models/` (repo-relative). Model artifacts are int
 ## Tracks
 
 - Track 2 (build system pipeline): completed.
-- Track 1 (Core ML OpenAI server): next implementation line.
+- Track 1 (OpenAI-compatible server contract): completed.
+- Track 3 (Swift Core ML inference runtime): completed.
