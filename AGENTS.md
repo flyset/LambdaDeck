@@ -1,6 +1,8 @@
-### Project ANE Models on LLMs (ANEMLL)
+### Project LambdaDeck
 
-ANEMLL (pronounced like "animal") is a practical codebase/framework for running **ANE-optimized Core ML LLMs** locally on Apple Silicon.
+LambdaDeck is the local, on-device LLM runtime/server effort in this repo.
+
+Legacy context: ANEMLL (pronounced like "animal") is a practical codebase/framework for running **ANE-optimized Core ML LLMs** locally on Apple Silicon.
 
 **Primary goal:** make it easy to **download, organize, and run** these models for on-device inference (low power, offline, privacy-preserving).
 
@@ -8,6 +10,21 @@ ANEMLL (pronounced like "animal") is a practical codebase/framework for running 
 - Model distributions under `anemll-*` (each typically includes `meta.yaml`, `*.mlmodelc`, tokenizer assets, and `chat.py` / `chat_full.py`).
 - Python dependencies for inference (`requirements.txt` / `requirements.lock.txt`).
 - Convenience script `start.sh` to activate `.venv`.
+
+---
+
+### What LambdaDeck Is Building
+
+LambdaDeck aims to make the ANEMLL Core ML model bundles usable from mainstream developer tools by exposing an OpenAI-compatible HTTP API.
+
+- Target clients: OpenCode, VSCode extensions, and any OpenAI-compatible SDK/tooling
+- Core endpoints (v1):
+  - `GET /v1/models`
+  - `POST /v1/chat/completions` (non-streaming and SSE streaming via `stream=true`)
+- Runtime direction: Swift-native server on macOS Apple Silicon; existing Python `chat.py` scripts remain a reference runner
+- Non-goals (v1): full OpenAI API surface, tool/function calling, multi-tenant auth, iOS embedding
+
+Current focus: `.backlog/DRAFT/2026/TRACK_1_DRAFT_coreml_openai_server.md`
 
 ---
 
@@ -24,7 +41,7 @@ ANEMLL (pronounced like "animal") is a practical codebase/framework for running 
 
 ### Tracks Backlog Governance (`.backlog/`)
 
-For non-trivial work, use the Tracks backlog as the planning and execution source of truth.
+For non-trivial work, use the Tracks backlog as the planning and execution source of truth for LambdaDeck.
 
 - Canonical rules: `.backlog/README.md`
 - Scoped backlog guidance: `.backlog/AGENTS.md`
