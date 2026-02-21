@@ -38,3 +38,6 @@ dist/
 
 # Model distributions (very large)
 anemll-*/
+
+# LambdaDeck local model root (very large; local-only)
+Models/
