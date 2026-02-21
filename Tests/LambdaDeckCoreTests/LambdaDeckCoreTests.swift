@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import LambdaDeckCore
 
@@ -18,5 +19,113 @@ final class LambdaDeckCoreTests: XCTestCase {
         XCTAssertEqual(response.choices.count, 1)
         XCTAssertEqual(response.choices[0].message.role, "assistant")
         XCTAssertEqual(response.choices[0].finishReason, "stop")
+    }
+
+    func testModelResolverPrioritizesStubFlag() throws {
+        let resolved = try LambdaDeckModelResolver.resolve(
+            options: LambdaDeckServeOptions(stubMode: true, modelPath: "/tmp/explicit"),
+            environment: LambdaDeckEnvironment(values: ["LAMBDADECK_MODEL_PATH": "/tmp/env"]),
+            currentDirectory: "/tmp"
+        )
+
+        XCTAssertEqual(resolved.modelID, StubChatFixtures.modelID)
+        XCTAssertNil(resolved.modelPath)
+        XCTAssertEqual(resolved.source, .stubFlag)
+    }
+
+    func testModelResolverPrioritizesCLIModelPathOverEnv() throws {
+        try withTemporaryDirectory { directory in
+            let cliModel = try createModelBundle(named: "cli-model", in: directory)
+            _ = try createModelBundle(named: "env-model", in: directory)
+
+            let resolved = try LambdaDeckModelResolver.resolve(
+                options: LambdaDeckServeOptions(modelPath: cliModel.path),
+                environment: LambdaDeckEnvironment(values: ["LAMBDADECK_MODEL_PATH": directory.appendingPathComponent("env-model").path]),
+                currentDirectory: directory.path
+            )
+
+            XCTAssertEqual(resolved.modelPath, cliModel.path)
+            XCTAssertEqual(resolved.modelID, "cli-model")
+            XCTAssertEqual(resolved.source, .cliModelPath)
+        }
+    }
+
+    func testModelResolverUsesEnvModelPathWhenCLIIsUnset() throws {
+        try withTemporaryDirectory { directory in
+            let envModel = try createModelBundle(named: "env-model", in: directory)
+
+            let resolved = try LambdaDeckModelResolver.resolve(
+                options: LambdaDeckServeOptions(),
+                environment: LambdaDeckEnvironment(values: ["LAMBDADECK_MODEL_PATH": envModel.path]),
+                currentDirectory: directory.path
+            )
+
+            XCTAssertEqual(resolved.modelPath, envModel.path)
+            XCTAssertEqual(resolved.modelID, "env-model")
+            XCTAssertEqual(resolved.source, .envModelPath)
+        }
+    }
+
+    func testModelResolverDiscoversSingleModelFromModelsRoot() throws {
+        try withTemporaryDirectory { directory in
+            let modelsRoot = directory.appendingPathComponent("Models")
+            try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+            _ = try createModelBundle(named: "only-model", in: modelsRoot)
+
+            let resolved = try LambdaDeckModelResolver.resolve(
+                options: LambdaDeckServeOptions(modelsRoot: modelsRoot.path),
+                environment: LambdaDeckEnvironment(values: [:]),
+                currentDirectory: directory.path
+            )
+
+            XCTAssertEqual(resolved.modelID, "only-model")
+            XCTAssertEqual(resolved.source, .discoveredModelsRoot)
+        }
+    }
+
+    func testModelResolverErrorsWhenDiscoveryFindsMultipleBundles() throws {
+        try withTemporaryDirectory { directory in
+            let modelsRoot = directory.appendingPathComponent("Models")
+            try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+            _ = try createModelBundle(named: "model-a", in: modelsRoot)
+            _ = try createModelBundle(named: "model-b", in: modelsRoot)
+
+            XCTAssertThrowsError(
+                try LambdaDeckModelResolver.resolve(
+                    options: LambdaDeckServeOptions(modelsRoot: modelsRoot.path),
+                    environment: LambdaDeckEnvironment(values: [:]),
+                    currentDirectory: directory.path
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? LambdaDeckModelResolutionError,
+                    .discoveredMultipleModels(
+                        modelsRoot: modelsRoot.path,
+                        candidates: [
+                            modelsRoot.appendingPathComponent("model-a").path,
+                            modelsRoot.appendingPathComponent("model-b").path
+                        ]
+                    )
+                )
+            }
+        }
+    }
+
+    private func withTemporaryDirectory(_ operation: (URL) throws -> Void) throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("LambdaDeckTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try operation(directory)
+    }
+
+    private func createModelBundle(named name: String, in root: URL) throws -> URL {
+        let bundle = root.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        let meta = bundle.appendingPathComponent("meta.yaml")
+        try "model_info:\n  name: \(name)\n".write(to: meta, atomically: true, encoding: .utf8)
+        return bundle
     }
 }

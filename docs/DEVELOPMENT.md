@@ -16,6 +16,36 @@ swift run lambdadeck --version
 swift test
 ```
 
+## Run local server (stub mode)
+
+```bash
+swift run lambdadeck serve --stub --port 8080
+```
+
+Example checks:
+
+```bash
+curl http://127.0.0.1:8080/v1/models
+
+curl -H "content-type: application/json" \
+  -d '{"model":"stub-model","messages":[{"role":"user","content":"Say hello in one short sentence."}],"stream":false}' \
+  http://127.0.0.1:8080/v1/chat/completions
+
+curl -N -H "content-type: application/json" \
+  -d '{"model":"stub-model","messages":[{"role":"user","content":"Stream a short greeting."}],"stream":true}' \
+  http://127.0.0.1:8080/v1/chat/completions
+```
+
+## Model selection precedence
+
+When not using `--stub`, model selection order is:
+
+1. `--model-path`
+2. `LAMBDADECK_MODEL_PATH`
+3. Discovery under models root (`--models-root` > `LAMBDADECK_MODELS_ROOT` > `./Models`)
+
+If discovery returns zero or multiple model bundles, pass `--model-path` explicitly.
+
 ## Model-less contract hook (for Track 1 stub mode)
 
 The CLI includes a deterministic, model-free contract output:

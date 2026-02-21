@@ -16,9 +16,15 @@ let package = Package(
             targets: ["LambdaDeckCLI"]
         )
     ],
+    dependencies: [
+        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0")
+    ],
     targets: [
         .target(
-            name: "LambdaDeckCore"
+            name: "LambdaDeckCore",
+            dependencies: [
+                .product(name: "Hummingbird", package: "hummingbird")
+            ]
         ),
         .executableTarget(
             name: "LambdaDeckCLI",
@@ -34,7 +40,11 @@ let package = Package(
         ),
         .testTarget(
             name: "LambdaDeckIntegrationTests",
-            dependencies: ["LambdaDeckCLI", "LambdaDeckCore"]
+            dependencies: [
+                "LambdaDeckCLI",
+                "LambdaDeckCore",
+                .product(name: "HummingbirdTesting", package: "hummingbird")
+            ]
         )
     ]
 )
