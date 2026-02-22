@@ -50,6 +50,8 @@ Implemented (v1 subset):
 
 Not implemented (v1): auth, tool/function calling, and the rest of the OpenAI API surface.
 
+Model support note: real inference is currently validated primarily for Gemma-family bundles (Gemma3 chunked is the most optimized/validated path).
+
 ## Tracks
 
 - Track 2 (build system pipeline): completed.

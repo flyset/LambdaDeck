@@ -35,6 +35,12 @@ For Gemma3 chunked bundles (FFN chunks with `prefill` / `prefill_rotate` functio
 
 See: `.backlog/COMPLETED/2026/TRACK_4_COMPLETED_swift_coreml_ttft_optimization.md`.
 
+## Current adapter coverage (alpha)
+
+- Runtime optimization (prefill): Gemma3 chunked bundles that expose `prefill` / `prefill_rotate` functions are the primary optimized path today.
+- Tokenization: the primary tokenizer implementation today is `GemmaBPETokenizer` (expects HuggingFace-style `tokenizer.json` + `tokenizer_config.json`).
+- Other model families/adapters: may be incomplete or unvalidated; expect limitations until additional adapters/tokenizers are added.
+
 ## Practical guidance for OpenCode-style prompts
 
 If you are seeing very high TTFT with OpenCode:
