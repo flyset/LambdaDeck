@@ -1,5 +1,8 @@
 # TRACK 10 [DRAFT]: model_specific_prompting_and_tokenizer_strategy
 
+Note
+- Tokenizer architecture and global strategy selection live in `/.backlog/ACTIVE/2026/TRACK_11_ACTIVE_unified_tokenizer_architecture_and_prompt_strategy.md`. Keep Track 10 focused on prompting/renderers; any tokenizer-family work should be scoped and executed under Track 11.
+
 Problems (PORE)
 - P1: As a user, I receive repetitive or role-confused responses from some models, because LambdaDeck applies a generic transcript prompt format when the model expects a model-specific chat template.
 - P2: As a maintainer, I cannot evolve prompt behavior safely, because prompt-format selection logic is embedded in runtime code instead of being adapter-driven and explicit.
