@@ -75,7 +75,7 @@ extension LambdaDeckModelResolutionError: LocalizedError {
         case .modelPathDoesNotExist(let path):
             return "Configured --model-path does not exist: \(path)"
         case .invalidModelPath(let path):
-            return "Invalid model path '\(path)'. Use a model bundle directory (meta.yaml + tokenizer + .mlmodelc parts) or a single .mlmodelc bundle."
+            return "Invalid model path '\(path)'. Use a model bundle directory (lambdadeck.bundle.json or meta.yaml + tokenizer + .mlmodelc parts) or a single .mlmodelc bundle."
         case .modelsRootNotFound(let path):
             return "Models root not found: \(path). Pass --model-path explicitly."
         case .discoveredNoModels(let root):
@@ -183,6 +183,11 @@ public enum LambdaDeckModelResolver {
 
         let metaPath = (path as NSString).appendingPathComponent("meta.yaml")
         if FileManager.default.fileExists(atPath: metaPath) {
+            return true
+        }
+
+        let lambdaDeckMetadataPath = (path as NSString).appendingPathComponent("lambdadeck.bundle.json")
+        if FileManager.default.fileExists(atPath: lambdaDeckMetadataPath) {
             return true
         }
 

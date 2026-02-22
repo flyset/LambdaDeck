@@ -531,6 +531,56 @@ final class OpenAIContractIntegrationTests: XCTestCase {
         }
     }
 
+    func testNonANEMLLMetadataBundleServesModelsAndChatWithStubRuntime() async throws {
+        let bundle = try createLambdaDeckMetadataBundle(modelID: "metadata-e2e")
+        defer {
+            try? FileManager.default.removeItem(at: bundle.deletingLastPathComponent())
+        }
+
+        let adapter = try LambdaDeckModelAdapterResolver.resolve(
+            modelPath: bundle.path,
+            fallbackModelID: "fallback-model"
+        )
+        let resolvedModel = LambdaDeckResolvedModel(
+            modelID: adapter.descriptor.modelID,
+            modelPath: bundle.path,
+            source: .cliModelPath
+        )
+        let configuration = LambdaDeckServerConfiguration(
+            host: "127.0.0.1",
+            port: 8080,
+            resolvedModel: resolvedModel,
+            inferenceRuntime: StubInferenceRuntime()
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+
+        let requestBody = try chatRequestBody(
+            OpenAIChatCompletionsRequest(
+                model: "metadata-e2e",
+                messages: [OpenAIChatMessage(role: "user", content: "Say hello")],
+                stream: false
+            )
+        )
+
+        try await app.test(.router) { client in
+            let modelsResponse = try await client.execute(uri: "/v1/models", method: .get)
+            XCTAssertEqual(modelsResponse.status, .ok)
+            let modelList = try JSONDecoder().decode(OpenAIModelListResponse.self, from: data(from: modelsResponse.body))
+            XCTAssertEqual(modelList.data.map(\.id), ["metadata-e2e"])
+
+            let response = try await client.execute(
+                uri: "/v1/chat/completions",
+                method: .post,
+                headers: [.contentType: "application/json"],
+                body: requestBody
+            )
+            XCTAssertEqual(response.status, .ok)
+            let payload = try JSONDecoder().decode(OpenAIChatCompletionResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.model, "metadata-e2e")
+            XCTAssertEqual(payload.choices[0].message.content, StubChatFixtures.completionText)
+        }
+    }
+
     func testLocalOnlyRealInferenceHarnessSkipsWithoutModelPath() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let modelPath = environment["LAMBDADECK_REAL_MODEL_PATH"], !modelPath.isEmpty else {
@@ -580,6 +630,61 @@ final class OpenAIContractIntegrationTests: XCTestCase {
 
     private func string(from buffer: ByteBuffer) -> String {
         String(decoding: data(from: buffer), as: UTF8.self)
+    }
+
+    private func createLambdaDeckMetadataBundle(modelID: String) throws -> URL {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("LambdaDeckMetadataIntegration-\(UUID().uuidString)")
+        let bundle = root.appendingPathComponent(modelID)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+
+        let tokenizerJSON = """
+        {
+          "model": {
+            "vocab": {
+              "<unk>": 0,
+              "<bos>": 1,
+              "<eos>": 2,
+              "▁": 3,
+              "A": 4
+            },
+            "merges": []
+          }
+        }
+        """
+        let tokenizerConfig = """
+        {
+          "bos_token": "<bos>",
+          "eos_token": "<eos>"
+        }
+        """
+        let metadata = """
+        {
+          "schema_version": 1,
+          "model": {
+            "id": "\(modelID)"
+          },
+          "tokenizer": {
+            "directory": "."
+          },
+          "adapter": {
+            "kind": "coreml.monolithic"
+          },
+          "runtime": {
+            "monolithic_model": "model.mlmodelc",
+            "context_length": 2048
+          },
+          "prompt": {
+            "format": "chat_transcript"
+          }
+        }
+        """
+
+        try tokenizerJSON.write(to: bundle.appendingPathComponent("tokenizer.json"), atomically: true, encoding: .utf8)
+        try tokenizerConfig.write(to: bundle.appendingPathComponent("tokenizer_config.json"), atomically: true, encoding: .utf8)
+        try metadata.write(to: bundle.appendingPathComponent("lambdadeck.bundle.json"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: bundle.appendingPathComponent("model.mlmodelc"), withIntermediateDirectories: true)
+        return bundle
     }
 }
 

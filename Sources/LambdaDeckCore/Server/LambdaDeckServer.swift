@@ -49,11 +49,27 @@ public enum LambdaDeckServerBootstrap {
         environment: LambdaDeckEnvironment = .processInfo,
         currentDirectory: String = FileManager.default.currentDirectoryPath
     ) throws -> LambdaDeckServerConfiguration {
-        let resolvedModel = try LambdaDeckModelResolver.resolve(
+        let initialResolvedModel = try LambdaDeckModelResolver.resolve(
             options: options,
             environment: environment,
             currentDirectory: currentDirectory
         )
+
+        let resolvedModel: LambdaDeckResolvedModel
+        if let modelPath = initialResolvedModel.modelPath {
+            let adapter = try LambdaDeckModelAdapterResolver.resolve(
+                modelPath: modelPath,
+                fallbackModelID: initialResolvedModel.modelID
+            )
+            resolvedModel = LambdaDeckResolvedModel(
+                modelID: adapter.descriptor.modelID,
+                modelPath: initialResolvedModel.modelPath,
+                source: initialResolvedModel.source
+            )
+        } else {
+            resolvedModel = initialResolvedModel
+        }
+
         let inferenceRuntimeProvider = resolvedModel.isStub
             ? nil
             : LambdaDeckRuntimeProvider(resolvedModel: resolvedModel, preload: true)

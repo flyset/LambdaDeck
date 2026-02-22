@@ -50,10 +50,16 @@ curl -N -H "content-type: application/json" \
 
 ## Run local server (real inference)
 
-Use a local ANEMLL bundle path when model artifacts are available:
+Use a local ANEMLL bundle path or a LambdaDeck metadata bundle (`lambdadeck.bundle.json`) when model artifacts are available:
 
 ```bash
 swift run lambdadeck serve --model-path "Models/<bundle-dir-or-mlmodelc>" --port 8080
+```
+
+Bundle metadata reference:
+
+```text
+docs/BUNDLE_METADATA.md
 ```
 
 Example checks:

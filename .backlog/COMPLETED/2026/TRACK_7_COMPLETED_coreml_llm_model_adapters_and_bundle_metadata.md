@@ -1,4 +1,4 @@
-# TRACK 7 [DRAFT]: coreml_llm_model_adapters_and_bundle_metadata
+# TRACK 7 [COMPLETED]: coreml_llm_model_adapters_and_bundle_metadata
 
 Problems (PORE)
 - P1: As a developer, I can’t run non-ANEMLL CoreML LLM bundles through LambdaDeck, because the runtime is coupled to one bundle layout + metadata source (ANEMLL-style meta.yaml).
@@ -38,11 +38,11 @@ Non-negotiables
 - No implementation begins until the Track is moved to ACTIVE and the “Move Track 7 to ACTIVE” step is checked.
 
 Milestones
-- [ ] Milestone 1: Define adapter responsibilities and boundaries (public protocol + minimal types).
-- [ ] Milestone 2: Define LambdaDeck bundle metadata spec + validation rules.
-- [ ] Milestone 3: Implement adapter selection + ANEMLL adapter wrapper around existing behavior.
-- [ ] Milestone 4: Implement a “LambdaDeck metadata” adapter path for a non-ANEMLL CoreML LLM bundle (testable).
-- [ ] Milestone 5: Add docs + examples and ensure `swift test` coverage for the new system.
+- [x] Milestone 1: Define adapter responsibilities and boundaries (public protocol + minimal types).
+- [x] Milestone 2: Define LambdaDeck bundle metadata spec + validation rules.
+- [x] Milestone 3: Implement adapter selection + ANEMLL adapter wrapper around existing behavior.
+- [x] Milestone 4: Implement a “LambdaDeck metadata” adapter path for a non-ANEMLL CoreML LLM bundle (testable).
+- [x] Milestone 5: Add docs + examples and ensure `swift test` coverage for the new system.
 
 Risks / decisions
 - Risk: “Any CoreML LLM” is too broad; mitigate by defining a strict LLM runtime contract (token-in/logits-out + state semantics) and requiring explicit adapters per family.
@@ -50,23 +50,34 @@ Risks / decisions
 - Decision: Keep ANEMLL `meta.yaml` support as one adapter path, not as the canonical metadata format.
 
 Plan (execution steps)
-- [ ] Move Track 7 to ACTIVE (folder + filename + title status).
-- [ ] Write failing tests for adapter selection + metadata validation.
-- [ ] Introduce adapter protocol + shared types; wire through server bootstrap.
-- [ ] Implement ANEMLL adapter (wrap current behavior) and ensure parity.
-- [ ] Implement LambdaDeck metadata spec + a non-ANEMLL adapter path; make tests pass.
-- [ ] Update docs; run `swift test`; move Track 7 to COMPLETED.
+- [x] Move Track 7 to ACTIVE (folder + filename + title status).
+- [x] Write failing tests for adapter selection + metadata validation.
+- [x] Introduce adapter protocol + shared types; wire through server bootstrap.
+- [x] Implement ANEMLL adapter (wrap current behavior) and ensure parity.
+- [x] Implement LambdaDeck metadata spec + a non-ANEMLL adapter path; make tests pass.
+- [x] Update docs; run `swift test`; move Track 7 to COMPLETED.
 
 Inventory
 - **Current inventory**
-  - Server routing + OpenAI contract: `Sources/LambdaDeckCore/Server/LambdaDeckServer.swift`, `Sources/LambdaDeckCore/OpenAI/OpenAIContracts.swift`
-  - Runtime provider + warmup behavior: `Sources/LambdaDeckCore/Runtime/InferenceRuntime.swift`
-  - Bootstrap/config/model discovery: `Sources/LambdaDeckCLI/*`, `Sources/LambdaDeckCore/Discovery/*` (exact files to enumerate when implementing)
+  - Adapter protocol + selection: `Sources/LambdaDeckCore/Adapters/ModelAdapter.swift`
+  - Bundle metadata spec + validation: `Sources/LambdaDeckCore/Bundles/LambdaDeckBundleMetadata.swift`
+  - Server bootstrap + model id wiring: `Sources/LambdaDeckCore/Server/LambdaDeckServer.swift`
+  - Runtime factory + adapter runtime delegation: `Sources/LambdaDeckCore/Runtime/InferenceRuntime.swift`
+  - Discovery support for metadata bundles: `Sources/LambdaDeckCore/Discovery/ModelResolution.swift`
+  - Metadata spec docs: `docs/BUNDLE_METADATA.md`, `ARCHITECTURE.md`
+  - Unit tests (selection + validation): `Tests/LambdaDeckCoreTests/LambdaDeckCoreTests.swift`
   - Integration tests: `Tests/LambdaDeckIntegrationTests/OpenAIContractIntegrationTests.swift`
 
+- **Validations run**
+  - `swift test` (pass; 41 tests, 0 failures, 1 skipped local-only real-model test)
+
 Artifacts
-- (To add) Bundle metadata schema doc + example bundle layouts.
+- `docs/BUNDLE_METADATA.md` (schema, fields, validation, and examples)
 - (To add) PR links and any compatibility notes discovered during adapter work.
 
 Completion notes (fill when COMPLETED/DEPRECATED)
-- Pending.
+- Added `LambdaDeckModelAdapter` protocol and adapter descriptor types with explicit prompt and decode/pre-fill execution metadata.
+- Added adapter selection with two paths: ANEMLL/runtime-inspector and LambdaDeck metadata (`lambdadeck.bundle.json`).
+- Added LambdaDeck-owned bundle metadata loader and validation with operator-friendly errors for missing tokenizer assets, missing model paths, schema mismatch, and unsupported kinds.
+- Wired server bootstrap/runtime factory through adapter resolution so model identity and runtime selection are no longer hard-coupled to ANEMLL-only metadata.
+- Added unit/integration tests for adapter selection, metadata validation, and non-ANEMLL serving path (`/v1/models` and `/v1/chat/completions`) using a synthetic bundle.

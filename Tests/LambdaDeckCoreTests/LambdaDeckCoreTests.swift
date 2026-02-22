@@ -83,6 +83,23 @@ final class LambdaDeckCoreTests: XCTestCase {
         }
     }
 
+    func testModelResolverDiscoversLambdaDeckMetadataBundleFromModelsRoot() throws {
+        try withTemporaryDirectory { directory in
+            let modelsRoot = directory.appendingPathComponent("Models")
+            try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+            _ = try createLambdaDeckMetadataBundle(modelID: "metadata-model", in: modelsRoot)
+
+            let resolved = try LambdaDeckModelResolver.resolve(
+                options: LambdaDeckServeOptions(modelsRoot: modelsRoot.path),
+                environment: LambdaDeckEnvironment(values: [:]),
+                currentDirectory: directory.path
+            )
+
+            XCTAssertEqual(resolved.modelID, "metadata-model")
+            XCTAssertEqual(resolved.source, .discoveredModelsRoot)
+        }
+    }
+
     func testModelResolverErrorsWhenDiscoveryFindsMultipleBundles() throws {
         try withTemporaryDirectory { directory in
             let modelsRoot = directory.appendingPathComponent("Models")
@@ -155,6 +172,65 @@ final class LambdaDeckCoreTests: XCTestCase {
 
             XCTAssertEqual(inventory.adapterKind, .monolithicCompiled)
             XCTAssertEqual(inventory.monolithicModelPath?.lastPathComponent, "monolithic.mlmodelc")
+        }
+    }
+
+    func testModelAdapterResolverPrefersLambdaDeckMetadataWhenPresent() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = try createLambdaDeckMetadataBundle(modelID: "metadata-model", in: directory)
+
+            let adapter = try LambdaDeckModelAdapterResolver.resolve(
+                modelPath: bundle.path,
+                fallbackModelID: "fallback-model"
+            )
+
+            XCTAssertEqual(adapter.descriptor.kind, .lambdaDeckMetadata)
+            XCTAssertEqual(adapter.descriptor.modelID, "metadata-model")
+            XCTAssertEqual(adapter.descriptor.promptFormat, .chatTranscript)
+        }
+    }
+
+    func testModelAdapterResolverFallsBackToANEMLLWhenMetadataMissing() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("anemll-model")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+            _ = try createModelDirectory(named: "monolithic.mlmodelc", in: bundle)
+            let meta = """
+            model_info:
+              architecture: gemma3
+              parameters:
+                monolithic_model: monolithic.mlmodelc
+            """
+            try meta.write(to: bundle.appendingPathComponent("meta.yaml"), atomically: true, encoding: .utf8)
+
+            let adapter = try LambdaDeckModelAdapterResolver.resolve(
+                modelPath: bundle.path,
+                fallbackModelID: "fallback-model"
+            )
+
+            XCTAssertEqual(adapter.descriptor.kind, .anemll)
+            XCTAssertEqual(adapter.descriptor.modelID, "fallback-model")
+        }
+    }
+
+    func testLambdaDeckMetadataValidationErrorsWhenTokenizerMissing() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("metadata-model")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            _ = try createModelDirectory(named: "model.mlmodelc", in: bundle)
+            try writeLambdaDeckMetadata(modelID: "metadata-model", in: bundle)
+
+            XCTAssertThrowsError(
+                try LambdaDeckModelAdapterResolver.resolve(
+                    modelPath: bundle.path,
+                    fallbackModelID: "fallback-model"
+                )
+            ) { error in
+                guard case .missingTokenizerAssets = error as? LambdaDeckBundleMetadataError else {
+                    return XCTFail("Expected missingTokenizerAssets error, got: \(error)")
+                }
+            }
         }
     }
 
@@ -243,6 +319,44 @@ final class LambdaDeckCoreTests: XCTestCase {
         )
         try tokenizerConfig.write(
             to: root.appendingPathComponent("tokenizer_config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private func createLambdaDeckMetadataBundle(modelID: String, in root: URL) throws -> URL {
+        let bundle = root.appendingPathComponent(modelID)
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        try createTokenizerAssets(in: bundle)
+        _ = try createModelDirectory(named: "model.mlmodelc", in: bundle)
+        try writeLambdaDeckMetadata(modelID: modelID, in: bundle)
+        return bundle
+    }
+
+    private func writeLambdaDeckMetadata(modelID: String, in bundle: URL) throws {
+        let metadata = """
+        {
+          "schema_version": 1,
+          "model": {
+            "id": "\(modelID)"
+          },
+          "tokenizer": {
+            "directory": "."
+          },
+          "adapter": {
+            "kind": "coreml.monolithic"
+          },
+          "runtime": {
+            "monolithic_model": "model.mlmodelc",
+            "context_length": 2048
+          },
+          "prompt": {
+            "format": "chat_transcript"
+          }
+        }
+        """
+        try metadata.write(
+            to: bundle.appendingPathComponent("lambdadeck.bundle.json"),
             atomically: true,
             encoding: .utf8
         )

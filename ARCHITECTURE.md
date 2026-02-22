@@ -25,6 +25,12 @@ LambdaDeck is a Swift-native, OpenAI-compatible HTTP server for on-device Core M
 - `Runtime/`
   - Runtime selection, model inspection, warmup/provider lifecycle, and Core ML execution.
   - Files: `InferenceRuntime.swift`, `CoreMLRuntime.swift`.
+- `Adapters/`
+  - Model-family adapter protocol and adapter selection.
+  - File: `ModelAdapter.swift`.
+- `Bundles/`
+  - LambdaDeck-owned bundle metadata schema loader + validation.
+  - File: `LambdaDeckBundleMetadata.swift`.
 - `Tokenizers/`
   - Tokenizer implementations used by runtime code.
   - File: `GemmaBPETokenizer.swift`.
@@ -38,23 +44,17 @@ This organization is intentionally mechanical: it improves ownership boundaries 
 
 1. CLI parses command options into `LambdaDeckServeOptions`.
 2. `LambdaDeckModelResolver` selects a model source (`--model-path`, env path, discovered root, or stub).
-3. `LambdaDeckServerBootstrap` creates server configuration and, for non-stub mode, initializes `LambdaDeckRuntimeProvider` for background warmup.
+3. `LambdaDeckServerBootstrap` resolves a model adapter (metadata-first, then ANEMLL fallback), sets effective model identity, and initializes `LambdaDeckRuntimeProvider` for background warmup in non-stub mode.
 4. `LambdaDeckServer` exposes:
    - `GET /v1/models`
    - `GET /readyz`
    - `POST /v1/chat/completions` (non-streaming and streaming)
 5. For inference requests, runtime is resolved directly or from provider state, then converted to OpenAI-shaped responses.
 
-## Track 7 Extension Points
+## Adapter + Metadata Path
 
-Track 7 introduces adapter and metadata abstractions. This layout prepares clear seams for:
-
-- bundle metadata loading and validation (planned `Bundles/`),
-- model-family adapter contracts (planned `Adapters/`),
-- preserving HTTP/OpenAI contract stability while expanding supported Core ML LLM bundle formats.
-
-## Non-Goals of This Reorg
-
-- No endpoint contract changes.
-- No runtime algorithm changes.
-- No new model family support in this step.
+- `lambdadeck.bundle.json` enables LambdaDeck-owned bundle discovery/validation.
+- `LambdaDeckModelAdapterResolver` selects:
+  - LambdaDeck metadata adapter when metadata file is present,
+  - ANEMLL adapter path otherwise.
+- Runtime creation is delegated through adapter implementations, preserving a stable OpenAI HTTP contract while allowing model-family-specific execution behavior.
