@@ -25,6 +25,7 @@ Safety:
 ```bash
 swift build
 swift run lambdadeck --help
+swift run lambdadeck help serve
 swift run lambdadeck --version
 swift test
 ```
@@ -32,7 +33,7 @@ swift test
 ### Model-less contract hook (CI-safe)
 
 ```bash
-swift run lambdadeck --stub-contract
+swift run lambdadeck contract stub
 ```
 
 This prints deterministic, OpenAI-shaped `chat.completion` JSON intended for contract/integration testing without any model assets.

@@ -12,6 +12,7 @@ This file is the canonical local golden path for LambdaDeck build/run/test.
 ```bash
 swift build
 swift run lambdadeck --help
+swift run lambdadeck help serve
 swift run lambdadeck --version
 swift test
 ```
@@ -99,7 +100,7 @@ If discovery returns zero or multiple model bundles, pass `--model-path` explici
 The CLI includes a deterministic, model-free contract output:
 
 ```bash
-swift run lambdadeck --stub-contract
+swift run lambdadeck contract stub
 ```
 
 This emits a stable OpenAI-shaped `chat.completion` JSON payload and is safe to run in CI.

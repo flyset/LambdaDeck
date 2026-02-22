@@ -7,8 +7,8 @@ import XCTest
 @testable import LambdaDeckCore
 
 final class OpenAIContractIntegrationTests: XCTestCase {
-    func testStubContractHookReturnsOpenAIShapedJSON() throws {
-        let result = LambdaDeckCLI.run(arguments: ["--stub-contract"])
+    func testContractStubHookReturnsOpenAIShapedJSON() throws {
+        let result = LambdaDeckCLI.run(arguments: ["contract", "stub"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.standardError, "")
