@@ -1,12 +1,15 @@
 # LambdaDeck
 
-LambdaDeck is a local, on-device LLM runtime/server effort. The near-term goal is a Swift-native, OpenAI-compatible HTTP API that can run against local Core ML model bundles.
+LambdaDeck is a local, on-device LLM runtime/server effort. The near-term goal is a Swift-native, OpenAI-compatible (subset) chat HTTP API that can run against local Core ML model bundles.
 
 Status:
 - Build + test pipeline (SwiftPM + CI) is in place.
 - OpenAI-compatible `/v1/models` and `/v1/chat/completions` (non-stream + SSE) are implemented.
 - Swift Core ML runtime integration is available for local model bundles via `--model-path`.
 - Real inference TTFT is improved for Gemma3 chunked bundles via hybrid batched prefill; server may return `503` while the runtime is warming up (clients should retry).
+
+Safety:
+- LambdaDeck is intended for trusted local use. There is no auth layer; do not expose the server to untrusted networks.
 
 ## Repo layout
 
@@ -37,6 +40,15 @@ This prints deterministic, OpenAI-shaped `chat.completion` JSON intended for con
 ## Models
 
 Put local model bundles under `Models/` (repo-relative). Model artifacts are intentionally excluded from git and are not assumed to exist in CI.
+
+## API surface
+
+Implemented (v1 subset):
+
+- `GET /v1/models`
+- `POST /v1/chat/completions` (non-streaming and SSE streaming via `stream=true`)
+
+Not implemented (v1): auth, tool/function calling, and the rest of the OpenAI API surface.
 
 ## Tracks
 
