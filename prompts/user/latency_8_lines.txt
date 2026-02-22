@@ -1,0 +1,1 @@
+You are being tested for responsiveness. Write 8 short sentences about local inference latency, each on its own line.

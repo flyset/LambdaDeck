@@ -46,3 +46,22 @@
 - Try CPU-only to see if it’s a NE execution-plan issue:
   - `python chat.py --meta ./meta.yaml --cpu`
 - If `--cpu` works but default doesn’t, it’s likely a CORE ML execution-plan / hardware-backend issue (not a Python logic bug).
+
+## 3) Slow TTFT or initial `503` responses during real inference
+
+### SYMPTOMS
+
+- First token takes a very long time to arrive (high TTFT), especially with large prompts.
+- During startup, `POST /v1/chat/completions` returns `503` with an OpenAI-shaped error:
+  - `{"error":{"type":"server_error","message":"runtime is still initializing; retry shortly"}}`
+
+### WHAT IT MEANS
+
+- TTFT is dominated by prefill (processing the prompt to build the model KV cache).
+- LambdaDeck may load the runtime in the background. While warming up, chat requests return `503` quickly so clients can retry instead of hanging.
+
+### FIX / MITIGATION
+
+- Retry on `503` with a short backoff.
+- Reduce the size of mostly-static system prompts (for example large agent instructions or embedded repo docs).
+- Sanity check with a minimal prompt to separate "prompt size" issues from runtime load issues.

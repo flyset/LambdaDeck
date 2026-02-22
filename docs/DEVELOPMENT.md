@@ -16,6 +16,15 @@ swift run lambdadeck --version
 swift test
 ```
 
+## Conventions
+
+Directory naming:
+
+- Keep SwiftPM conventions: `Sources/`, `Tests/`.
+- Keep model root naming: `Models/`.
+- Use lowercase for new support directories (for example: `docs/`, `scripts/`, `prompts/`).
+- Avoid case-only renames (can be problematic on macOS case-insensitive filesystems).
+
 ## Run local server (stub mode)
 
 ```bash
@@ -56,6 +65,23 @@ curl -H "content-type: application/json" \
 curl -N -H "content-type: application/json" \
   -d '{"model":"<resolved-model-id>","messages":[{"role":"user","content":"Count to three."}],"max_tokens":16,"stream":true}' \
   http://127.0.0.1:8080/v1/chat/completions
+```
+
+## Performance / TTFT (local)
+
+Notes:
+- TTFT (time-to-first-token) is dominated by prompt prefill (building the model KV cache inside Core ML `MLState`). Large, mostly-static system prompts (for example OpenCode agent instructions) can dominate TTFT.
+- When running real inference, the server may return `503` while the runtime is still warming up. Clients should retry.
+
+Local measurement helper (streaming TTFT), comparing a large vs stripped system prompt:
+
+```bash
+python3 scripts/compare_ttft.py \
+  --base http://127.0.0.1:8080 \
+  --system-a prompts/system/opencode_like_full.txt \
+  --system-b prompts/system/opencode_like_stripped.txt \
+  --user prompts/user/latency_8_lines.txt \
+  --max-tokens 256
 ```
 
 ## Model selection precedence

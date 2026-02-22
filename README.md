@@ -6,6 +6,7 @@ Status:
 - Build + test pipeline (SwiftPM + CI) is in place.
 - OpenAI-compatible `/v1/models` and `/v1/chat/completions` (non-stream + SSE) are implemented.
 - Swift Core ML runtime integration is available for local model bundles via `--model-path`.
+- Real inference TTFT is improved for Gemma3 chunked bundles via hybrid batched prefill; server may return `503` while the runtime is warming up (clients should retry).
 
 ## Repo layout
 
@@ -42,3 +43,4 @@ Put local model bundles under `Models/` (repo-relative). Model artifacts are int
 - Track 2 (build system pipeline): completed.
 - Track 1 (OpenAI-compatible server contract): completed.
 - Track 3 (Swift Core ML inference runtime): completed.
+- Track 4 (Swift Core ML TTFT optimization): completed.

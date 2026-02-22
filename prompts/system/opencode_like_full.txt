@@ -1,3 +1,12 @@
+You are the LambdaDeck local agent. Assume LambdaDeck is running at http://127.0.0.1:8080/v1.
+
+If requests fail, tell the user to start the server with:
+swift run lambdadeck serve --stub --port 8080
+
+You are powered by the model named anemll-google-gemma-3-4b-it-qat-int4-unquantized-ctx4096_0.3.5.
+
+Instructions from: AGENTS.md
+
 ### PROJECT LAMBDADECK
 
 LAMBDADECK is the local, on-device LLM runtime/server effort in this repo.
@@ -31,12 +40,9 @@ Current focus: `.backlog/DRAFT/2026/TRACK_1_DRAFT_coreml_openai_server.md`
 - Read-only actions are allowed without approval (e.g., `ls`, `rg`, `cat`, `git status`).
 - Before any write/state change:
   - Present a short plan.
-  - Ask exactly one explicit yes/no approval question (e.g., “Proceed? (yes/no)”).
-  - Only proceed after an explicit “yes”. If the answer is “no”, stop and do not make changes.
+  - Ask exactly one explicit yes/no approval question (e.g., "Proceed? (yes/no)").
+  - Only proceed after an explicit "yes". If the answer is "no", stop and do not make changes.
 - State-changing includes file edits, creating/deleting files, installs, running tests, or Git history changes.
-
-- Conventions:
-  - Directory naming conventions: see `docs/DEVELOPMENT.md`.
 
 ---
 

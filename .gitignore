@@ -47,3 +47,7 @@ Models/
 .opencode/
 opencode.json
 opencode.jsonc
+
+# Local TTFT capture artifacts
+/raw_prompt*.txt
+/prompt*.txt
