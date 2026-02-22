@@ -8,6 +8,12 @@ private struct ChunkInferModels {
 }
 
 @available(macOS 15.0, *)
+private struct ChunkPrefillModels {
+    let prefill: MLModel
+    let prefillRotate: MLModel?
+}
+
+@available(macOS 15.0, *)
 private enum RuntimePromptRenderer {
     static func render(messages: [OpenAIChatMessage], tokenizer: GemmaBPETokenizer) throws -> String {
         if tokenizer.tokenID(for: "<start_of_turn>") != nil, tokenizer.tokenID(for: "<end_of_turn>") != nil {
@@ -270,6 +276,71 @@ private enum RuntimeGenerationHelpers {
 
 @available(macOS 15.0, *)
 private enum RuntimeInputBuilders {
+    struct ReusableTokenStepInputs {
+        let inputIDs: MLMultiArray
+        let positionIDs: MLMultiArray
+        let currentPos: MLMultiArray
+        let causalMask: MLMultiArray
+        private let contextLength: Int
+        private var highestUnmaskedPosition: Int
+
+        init(contextLength: Int) throws {
+            self.inputIDs = try RuntimeInputBuilders.makeInt32Array(shape: [1, 1], values: [0])
+            self.positionIDs = try RuntimeInputBuilders.makeInt32Array(shape: [1], values: [0])
+            self.currentPos = try RuntimeInputBuilders.makeInt32Array(shape: [1], values: [0])
+            self.causalMask = try MLMultiArray(
+                shape: [1, 1, 1, NSNumber(value: contextLength)],
+                dataType: .float16
+            )
+            self.contextLength = contextLength
+            self.highestUnmaskedPosition = -1
+
+            let maskPointer = UnsafeMutablePointer<UInt16>(OpaquePointer(self.causalMask.dataPointer))
+            let negativeInfinity = Float16(-Float.greatestFiniteMagnitude).bitPattern
+            for index in 0..<contextLength {
+                maskPointer[index] = negativeInfinity
+            }
+        }
+
+        mutating func update(tokenID: Int, position: Int) {
+            let inputPointer = UnsafeMutablePointer<Int32>(OpaquePointer(self.inputIDs.dataPointer))
+            inputPointer[0] = Int32(tokenID)
+
+            let positionPointer = UnsafeMutablePointer<Int32>(OpaquePointer(self.positionIDs.dataPointer))
+            positionPointer[0] = Int32(position)
+
+            let currentPosPointer = UnsafeMutablePointer<Int32>(OpaquePointer(self.currentPos.dataPointer))
+            currentPosPointer[0] = Int32(position)
+
+            self.updateMask(position: position)
+        }
+
+        private mutating func updateMask(position: Int) {
+            guard self.contextLength > 0 else {
+                return
+            }
+
+            let cappedPosition = max(0, min(position, self.contextLength - 1))
+            let maskPointer = UnsafeMutablePointer<UInt16>(OpaquePointer(self.causalMask.dataPointer))
+            let zero = Float16(0).bitPattern
+            let negativeInfinity = Float16(-Float.greatestFiniteMagnitude).bitPattern
+
+            if cappedPosition < self.highestUnmaskedPosition {
+                for index in 0..<self.contextLength {
+                    maskPointer[index] = negativeInfinity
+                }
+                self.highestUnmaskedPosition = -1
+            }
+
+            if cappedPosition > self.highestUnmaskedPosition {
+                for index in (self.highestUnmaskedPosition + 1)...cappedPosition {
+                    maskPointer[index] = zero
+                }
+                self.highestUnmaskedPosition = cappedPosition
+            }
+        }
+    }
+
     static func makeInt32Array(shape: [Int], values: [Int32]) throws -> MLMultiArray {
         let nsShape = shape.map { NSNumber(value: $0) }
         let array = try MLMultiArray(shape: nsShape, dataType: .int32)
@@ -303,6 +374,56 @@ private enum RuntimeInputBuilders {
         let causalMask = try makeCausalMask(position: position, contextLength: contextLength)
         return (inputIDs, positionIDs, currentPos, causalMask)
     }
+
+    static func makePrefillBatchInputs(
+        tokenIDs: [Int],
+        batchStart: Int,
+        currentBatchCount: Int,
+        batchSize: Int,
+        contextLength: Int
+    ) throws -> (
+        inputIDs: MLMultiArray,
+        positionIDs: MLMultiArray,
+        currentPos: MLMultiArray,
+        causalMask: MLMultiArray
+    ) {
+        var paddedTokenIDs = Array(repeating: Int32(0), count: batchSize)
+        if currentBatchCount > 0 {
+            for offset in 0..<currentBatchCount {
+                paddedTokenIDs[offset] = Int32(tokenIDs[batchStart + offset])
+            }
+        }
+
+        let positionValues = (0..<batchSize).map { Int32(batchStart + $0) }
+        let inputIDs = try makeInt32Array(shape: [1, batchSize], values: paddedTokenIDs)
+        let positionIDs = try makeInt32Array(shape: [batchSize], values: positionValues)
+        let currentPos = try makeInt32Array(shape: [1], values: [Int32(batchStart)])
+        let causalMask = try makePrefillCausalMask(
+            batchStart: batchStart,
+            batchSize: batchSize,
+            contextLength: contextLength
+        )
+        return (inputIDs, positionIDs, currentPos, causalMask)
+    }
+
+    static func makePrefillCausalMask(batchStart: Int, batchSize: Int, contextLength: Int) throws -> MLMultiArray {
+        let mask = try MLMultiArray(
+            shape: [1, 1, NSNumber(value: batchSize), NSNumber(value: contextLength)],
+            dataType: .float16
+        )
+        let pointer = UnsafeMutablePointer<UInt16>(OpaquePointer(mask.dataPointer))
+        let zero = Float16(0).bitPattern
+        let negativeInfinity = Float16(-Float.greatestFiniteMagnitude).bitPattern
+
+        for row in 0..<batchSize {
+            let absolutePosition = batchStart + row
+            for column in 0..<contextLength {
+                let index = row * contextLength + column
+                pointer[index] = column <= absolutePosition ? zero : negativeInfinity
+            }
+        }
+        return mask
+    }
 }
 
 @available(macOS 15.0, *)
@@ -311,8 +432,16 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
     private let embeddingsModel: MLModel
     private let lmHeadModel: MLModel
     private let chunkModels: [ChunkInferModels]
+    private let prefillChunkPaths: [URL]
     private let contextLength: Int
     private let slidingWindow: Int?
+    private let prefillBatchSize: Int
+    private var prefillModels: [ChunkPrefillModels]?
+    private var prefillUnavailable: Bool
+
+    private var supportsBatchedPrefill: Bool {
+        self.prefillBatchSize > 1
+    }
 
     init(inventory: LambdaDeckRuntimeInventory) throws {
         guard inventory.adapterKind == .gemma3Chunked,
@@ -325,6 +454,10 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
 
         self.contextLength = inventory.contextLength
         self.slidingWindow = inventory.slidingWindow
+        self.prefillBatchSize = max(1, min(inventory.batchSize ?? 64, 64))
+        self.prefillChunkPaths = inventory.ffnChunkPaths
+        self.prefillModels = nil
+        self.prefillUnavailable = self.prefillBatchSize <= 1
         self.tokenizer = try GemmaBPETokenizer(directory: inventory.tokenizerDirectory)
 
         self.embeddingsModel = try Self.loadModel(url: embeddingsPath, functionName: nil)
@@ -335,9 +468,31 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
         for chunkPath in inventory.ffnChunkPaths {
             let infer = try Self.loadModel(url: chunkPath, functionName: "infer")
             let inferRotate = try? Self.loadModel(url: chunkPath, functionName: "infer_rotate")
-            chunks.append(ChunkInferModels(infer: infer, inferRotate: inferRotate))
+            chunks.append(
+                ChunkInferModels(
+                    infer: infer,
+                    inferRotate: inferRotate
+                )
+            )
         }
         self.chunkModels = chunks
+
+        if self.prefillBatchSize > 1 {
+            var loadedPrefillModels: [ChunkPrefillModels] = []
+            loadedPrefillModels.reserveCapacity(inventory.ffnChunkPaths.count)
+            do {
+                for chunkPath in inventory.ffnChunkPaths {
+                    let prefill = try Self.loadModel(url: chunkPath, functionName: "prefill")
+                    let prefillRotate = try? Self.loadModel(url: chunkPath, functionName: "prefill_rotate")
+                    loadedPrefillModels.append(ChunkPrefillModels(prefill: prefill, prefillRotate: prefillRotate))
+                }
+                self.prefillModels = loadedPrefillModels
+                self.prefillUnavailable = false
+            } catch {
+                self.prefillModels = nil
+                self.prefillUnavailable = true
+            }
+        }
     }
 
     func complete(request: OpenAIChatCompletionsRequest) async throws -> LambdaDeckRuntimeCompletion {
@@ -366,9 +521,28 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
         }
     }
 
+    private enum PrefillMode {
+        case automatic
+        case tokenByToken
+    }
+
     private func generate(
         request: OpenAIChatCompletionsRequest,
         onToken: (@Sendable (String) -> Void)?
+    ) async throws -> LambdaDeckRuntimeCompletion {
+        try await self.generateInternal(
+            request: request,
+            onToken: onToken,
+            prefillMode: .automatic,
+            allowRetry: true
+        )
+    }
+
+    private func generateInternal(
+        request: OpenAIChatCompletionsRequest,
+        onToken: (@Sendable (String) -> Void)?,
+        prefillMode: PrefillMode,
+        allowRetry: Bool
     ) async throws -> LambdaDeckRuntimeCompletion {
         try RuntimeGenerationHelpers.validateRequest(request)
 
@@ -387,21 +561,32 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
         let stopTokenIDs = RuntimeGenerationHelpers.stopTokenIDs(tokenizer: self.tokenizer)
         let stopStrings = RuntimeGenerationHelpers.stopStrings(from: request.stop)
 
-        let state = self.chunkModels[0].infer.makeState()
-
-        var lastLogits: (any MLFeatureProvider)?
-        for (position, tokenID) in tokenIDs.enumerated() {
-            try Task.checkCancellation()
-            lastLogits = try self.chunkedStep(
-                tokenID: tokenID,
-                position: position,
-                state: state
+        var state = self.chunkModels[0].infer.makeState()
+        var tokenStepInputs = try RuntimeInputBuilders.ReusableTokenStepInputs(contextLength: self.contextLength)
+        switch prefillMode {
+        case .automatic:
+            state = try self.prefillPrompt(
+                tokenIDs: tokenIDs,
+                state: state,
+                tokenStepInputs: &tokenStepInputs
+            )
+        case .tokenByToken:
+            try self.prefillPromptTokenByToken(
+                tokenIDs: tokenIDs,
+                prefillTokenCount: max(0, tokenIDs.count - 1),
+                state: state,
+                tokenStepInputs: &tokenStepInputs
             )
         }
 
-        guard let initialLogits = lastLogits else {
-            throw LambdaDeckRuntimeError.runtimeFailure("Failed to compute initial logits after prefill")
-        }
+        let lastPromptPosition = promptTokenCount - 1
+        let lastPromptToken = tokenIDs[lastPromptPosition]
+        let initialLogits = try self.chunkedStep(
+            tokenID: lastPromptToken,
+            position: lastPromptPosition,
+            state: state,
+            tokenStepInputs: &tokenStepInputs
+        )
 
         var logitsProvider = initialLogits
         var completionTokenIDs: [Int] = []
@@ -450,13 +635,28 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
             logitsProvider = try self.chunkedStep(
                 tokenID: nextToken,
                 position: nextTokenPosition,
-                state: state
+                state: state,
+                tokenStepInputs: &tokenStepInputs
             )
 
             if completionTokenIDs.count >= maxNewTokens {
                 finishReason = "length"
                 break
             }
+        }
+
+        if allowRetry,
+           prefillMode == .automatic,
+           completionText.isEmpty,
+           completionTokenIDs.count == 1,
+           finishReason == "stop"
+        {
+            return try await self.generateInternal(
+                request: request,
+                onToken: onToken,
+                prefillMode: .tokenByToken,
+                allowRetry: false
+            )
         }
 
         let usage = OpenAIUsage(
@@ -467,15 +667,174 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
         return LambdaDeckRuntimeCompletion(content: completionText, finishReason: finishReason, usage: usage)
     }
 
-    private func chunkedStep(tokenID: Int, position: Int, state: MLState) throws -> any MLFeatureProvider {
-        let inputs = try RuntimeInputBuilders.makeTokenStepInputs(
-            tokenID: tokenID,
-            position: position,
-            contextLength: self.contextLength
+    private func loadPrefillModelsIfNeeded() -> [ChunkPrefillModels]? {
+        if let prefillModels = self.prefillModels {
+            return prefillModels
+        }
+        if self.prefillUnavailable {
+            return nil
+        }
+
+        var loaded: [ChunkPrefillModels] = []
+        loaded.reserveCapacity(self.prefillChunkPaths.count)
+
+        do {
+            for chunkPath in self.prefillChunkPaths {
+                let prefill = try Self.loadModel(url: chunkPath, functionName: "prefill")
+                let prefillRotate = try? Self.loadModel(url: chunkPath, functionName: "prefill_rotate")
+                loaded.append(ChunkPrefillModels(prefill: prefill, prefillRotate: prefillRotate))
+            }
+            guard loaded.count == self.chunkModels.count else {
+                self.prefillUnavailable = true
+                return nil
+            }
+            self.prefillModels = loaded
+            return loaded
+        } catch {
+            self.prefillUnavailable = true
+            self.prefillModels = nil
+            return nil
+        }
+    }
+
+    private func prefillPrompt(
+        tokenIDs: [Int],
+        state: MLState,
+        tokenStepInputs: inout RuntimeInputBuilders.ReusableTokenStepInputs
+    ) throws -> MLState {
+        let prefillTokenCount = max(0, tokenIDs.count - 1)
+        guard prefillTokenCount > 0 else {
+            return state
+        }
+
+        if self.supportsBatchedPrefill, let prefillModels = self.loadPrefillModelsIfNeeded() {
+            do {
+                try self.prefillPromptBatched(
+                    tokenIDs: tokenIDs,
+                    prefillTokenCount: prefillTokenCount,
+                    prefillModels: prefillModels,
+                    state: state,
+                    tokenStepInputs: &tokenStepInputs
+                )
+                return state
+            } catch {
+                let fallbackState = self.chunkModels[0].infer.makeState()
+                tokenStepInputs = try RuntimeInputBuilders.ReusableTokenStepInputs(contextLength: self.contextLength)
+                try self.prefillPromptTokenByToken(
+                    tokenIDs: tokenIDs,
+                    prefillTokenCount: prefillTokenCount,
+                    state: fallbackState,
+                    tokenStepInputs: &tokenStepInputs
+                )
+                return fallbackState
+            }
+        }
+
+        try self.prefillPromptTokenByToken(
+            tokenIDs: tokenIDs,
+            prefillTokenCount: prefillTokenCount,
+            state: state,
+            tokenStepInputs: &tokenStepInputs
         )
+        return state
+    }
+
+    private func prefillPromptTokenByToken(
+        tokenIDs: [Int],
+        prefillTokenCount: Int,
+        state: MLState,
+        tokenStepInputs: inout RuntimeInputBuilders.ReusableTokenStepInputs,
+        startPosition: Int = 0
+    ) throws {
+        guard startPosition < prefillTokenCount else {
+            return
+        }
+        for position in startPosition..<prefillTokenCount {
+            try Task.checkCancellation()
+            _ = try self.chunkedStep(
+                tokenID: tokenIDs[position],
+                position: position,
+                state: state,
+                tokenStepInputs: &tokenStepInputs
+            )
+        }
+    }
+
+    private func prefillPromptBatched(
+        tokenIDs: [Int],
+        prefillTokenCount: Int,
+        prefillModels: [ChunkPrefillModels],
+        state: MLState,
+        tokenStepInputs: inout RuntimeInputBuilders.ReusableTokenStepInputs
+    ) throws {
+        let fullBatchTokenCount = (prefillTokenCount / self.prefillBatchSize) * self.prefillBatchSize
+        var batchStart = 0
+        while batchStart < fullBatchTokenCount {
+            try Task.checkCancellation()
+
+            let inputs = try RuntimeInputBuilders.makePrefillBatchInputs(
+                tokenIDs: tokenIDs,
+                batchStart: batchStart,
+                currentBatchCount: self.prefillBatchSize,
+                batchSize: self.prefillBatchSize,
+                contextLength: self.contextLength
+            )
+
+            let embeddingInput = try MLDictionaryFeatureProvider(dictionary: [
+                "input_ids": MLFeatureValue(multiArray: inputs.inputIDs)
+            ])
+            let embeddingOutput = try self.embeddingsModel.prediction(from: embeddingInput)
+            guard var hiddenStates = embeddingOutput.featureValue(for: "hidden_states")?.multiArrayValue else {
+                throw LambdaDeckRuntimeError.runtimeFailure("Embeddings model did not return hidden_states")
+            }
+
+            for prefillChunk in prefillModels {
+                let useRotate = self.slidingWindow != nil
+                    && batchStart >= self.slidingWindow!
+                    && prefillChunk.prefillRotate != nil
+                let activeModel = useRotate ? (prefillChunk.prefillRotate ?? prefillChunk.prefill) : prefillChunk.prefill
+
+                let chunkInput = try MLDictionaryFeatureProvider(dictionary: [
+                    "hidden_states": MLFeatureValue(multiArray: hiddenStates),
+                    "position_ids": MLFeatureValue(multiArray: inputs.positionIDs),
+                    "causal_mask": MLFeatureValue(multiArray: inputs.causalMask),
+                    "current_pos": MLFeatureValue(multiArray: inputs.currentPos)
+                ])
+                let chunkOutput = try activeModel.prediction(
+                    from: chunkInput,
+                    using: state,
+                    options: MLPredictionOptions()
+                )
+                guard let nextHidden = chunkOutput.featureValue(for: "output_hidden_states")?.multiArrayValue else {
+                    throw LambdaDeckRuntimeError.runtimeFailure("FFN prefill function did not return output_hidden_states")
+                }
+                hiddenStates = nextHidden
+            }
+
+            batchStart += self.prefillBatchSize
+        }
+
+        if fullBatchTokenCount < prefillTokenCount {
+            try self.prefillPromptTokenByToken(
+                tokenIDs: tokenIDs,
+                prefillTokenCount: prefillTokenCount,
+                state: state,
+                tokenStepInputs: &tokenStepInputs,
+                startPosition: fullBatchTokenCount
+            )
+        }
+    }
+
+    private func chunkedStep(
+        tokenID: Int,
+        position: Int,
+        state: MLState,
+        tokenStepInputs: inout RuntimeInputBuilders.ReusableTokenStepInputs
+    ) throws -> any MLFeatureProvider {
+        tokenStepInputs.update(tokenID: tokenID, position: position)
 
         let embeddingInput = try MLDictionaryFeatureProvider(dictionary: [
-            "input_ids": MLFeatureValue(multiArray: inputs.inputIDs)
+            "input_ids": MLFeatureValue(multiArray: tokenStepInputs.inputIDs)
         ])
         let embeddingOutput = try self.embeddingsModel.prediction(from: embeddingInput)
         guard var hiddenStates = embeddingOutput.featureValue(for: "hidden_states")?.multiArrayValue else {
@@ -490,9 +849,9 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
 
             let chunkInput = try MLDictionaryFeatureProvider(dictionary: [
                 "hidden_states": MLFeatureValue(multiArray: hiddenStates),
-                "position_ids": MLFeatureValue(multiArray: inputs.positionIDs),
-                "causal_mask": MLFeatureValue(multiArray: inputs.causalMask),
-                "current_pos": MLFeatureValue(multiArray: inputs.currentPos)
+                "position_ids": MLFeatureValue(multiArray: tokenStepInputs.positionIDs),
+                "causal_mask": MLFeatureValue(multiArray: tokenStepInputs.causalMask),
+                "current_pos": MLFeatureValue(multiArray: tokenStepInputs.currentPos)
             ])
             let chunkOutput = try activeModel.prediction(
                 from: chunkInput,

@@ -57,6 +57,7 @@ public enum LambdaDeckRuntimeError: Error, LocalizedError, Sendable, Equatable {
     case unsupportedArchitecture(String)
     case invalidModelBundle(String)
     case invalidRequest(String)
+    case runtimeWarmingUp(String)
     case runtimeFailure(String)
 
     public var errorDescription: String? {
@@ -68,6 +69,8 @@ public enum LambdaDeckRuntimeError: Error, LocalizedError, Sendable, Equatable {
         case .invalidModelBundle(let message):
             return message
         case .invalidRequest(let message):
+            return message
+        case .runtimeWarmingUp(let message):
             return message
         case .runtimeFailure(let message):
             return message
@@ -389,6 +392,108 @@ public enum LambdaDeckRuntimeFactory {
             return try Gemma3CoreMLRuntime(inventory: inventory)
         case .monolithicCompiled:
             return try MonolithicCoreMLRuntime(inventory: inventory)
+        }
+    }
+}
+
+public actor LambdaDeckRuntimeProvider {
+    typealias RuntimeLoader = @Sendable (LambdaDeckResolvedModel) async throws -> (any LambdaDeckInferenceRuntime)?
+
+    private let resolvedModel: LambdaDeckResolvedModel
+    private let runtimeLoader: RuntimeLoader
+    private var runtime: (any LambdaDeckInferenceRuntime)?
+    private var preloadTask: Task<Void, Never>?
+    private var isLoading: Bool
+    private var cachedError: LambdaDeckRuntimeError?
+
+    public init(resolvedModel: LambdaDeckResolvedModel, preload: Bool = true) {
+        self.init(
+            resolvedModel: resolvedModel,
+            preload: preload,
+            runtimeLoader: { resolved in
+                try LambdaDeckRuntimeFactory.makeRuntime(resolvedModel: resolved)
+            }
+        )
+    }
+
+    init(
+        resolvedModel: LambdaDeckResolvedModel,
+        preload: Bool,
+        runtimeLoader: @escaping RuntimeLoader
+    ) {
+        self.resolvedModel = resolvedModel
+        self.runtimeLoader = runtimeLoader
+        self.runtime = nil
+        self.preloadTask = nil
+        self.isLoading = false
+        self.cachedError = nil
+        if preload {
+            Task {
+                await self.startPreloadIfNeeded()
+            }
+        }
+    }
+
+    public func runtimeInstance(maxWaitNanoseconds: UInt64? = nil) async throws -> (any LambdaDeckInferenceRuntime)? {
+        self.startPreloadIfNeeded()
+
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        while true {
+            if let runtime {
+                return runtime
+            }
+            if let cachedError {
+                throw cachedError
+            }
+
+            if !self.isLoading {
+                self.startPreloadIfNeeded()
+            }
+
+            if let maxWaitNanoseconds {
+                let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
+                if elapsed >= maxWaitNanoseconds {
+                    throw LambdaDeckRuntimeError.runtimeWarmingUp("runtime is still initializing; retry shortly")
+                }
+            }
+
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    private func startPreloadIfNeeded() {
+        if self.isLoading || self.runtime != nil || self.cachedError != nil {
+            return
+        }
+
+        self.isLoading = true
+        let resolvedModel = self.resolvedModel
+        let runtimeLoader = self.runtimeLoader
+        self.preloadTask = Task.detached(priority: .utility) {
+            let result: Result<(any LambdaDeckInferenceRuntime)?, LambdaDeckRuntimeError>
+            do {
+                let loaded = try await runtimeLoader(resolvedModel)
+                result = .success(loaded)
+            } catch let runtimeError as LambdaDeckRuntimeError {
+                result = .failure(runtimeError)
+            } catch {
+                result = .failure(.runtimeFailure("runtime inference initialization failed"))
+            }
+
+            await self.finishPreload(result: result)
+        }
+    }
+
+    private func finishPreload(result: Result<(any LambdaDeckInferenceRuntime)?, LambdaDeckRuntimeError>) {
+        self.isLoading = false
+        self.preloadTask = nil
+        switch result {
+        case .success(let loadedRuntime):
+            self.runtime = loadedRuntime
+            self.cachedError = nil
+        case .failure(let error):
+            self.runtime = nil
+            self.cachedError = error
         }
     }
 }

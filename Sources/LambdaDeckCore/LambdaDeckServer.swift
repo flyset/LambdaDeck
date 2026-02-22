@@ -6,7 +6,9 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
     public let port: Int
     public let resolvedModel: LambdaDeckResolvedModel
     public let inferenceRuntime: (any LambdaDeckInferenceRuntime)?
+    public let inferenceRuntimeProvider: LambdaDeckRuntimeProvider?
     public let maxRequestBodyBytes: Int
+    public let runtimeWarmupTimeoutNanoseconds: UInt64
     public let streamChunkDelayNanoseconds: UInt64
 
     public init(
@@ -14,14 +16,18 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
         port: Int,
         resolvedModel: LambdaDeckResolvedModel,
         inferenceRuntime: (any LambdaDeckInferenceRuntime)? = nil,
+        inferenceRuntimeProvider: LambdaDeckRuntimeProvider? = nil,
         maxRequestBodyBytes: Int = 2_000_000,
+        runtimeWarmupTimeoutNanoseconds: UInt64 = 5_000_000_000,
         streamChunkDelayNanoseconds: UInt64 = 0
     ) {
         self.host = host
         self.port = port
         self.resolvedModel = resolvedModel
         self.inferenceRuntime = inferenceRuntime
+        self.inferenceRuntimeProvider = inferenceRuntimeProvider
         self.maxRequestBodyBytes = maxRequestBodyBytes
+        self.runtimeWarmupTimeoutNanoseconds = runtimeWarmupTimeoutNanoseconds
         self.streamChunkDelayNanoseconds = streamChunkDelayNanoseconds
     }
 
@@ -30,7 +36,9 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
             && lhs.port == rhs.port
             && lhs.resolvedModel == rhs.resolvedModel
             && ((lhs.inferenceRuntime == nil) == (rhs.inferenceRuntime == nil))
+            && ((lhs.inferenceRuntimeProvider == nil) == (rhs.inferenceRuntimeProvider == nil))
             && lhs.maxRequestBodyBytes == rhs.maxRequestBodyBytes
+            && lhs.runtimeWarmupTimeoutNanoseconds == rhs.runtimeWarmupTimeoutNanoseconds
             && lhs.streamChunkDelayNanoseconds == rhs.streamChunkDelayNanoseconds
     }
 }
@@ -46,12 +54,14 @@ public enum LambdaDeckServerBootstrap {
             environment: environment,
             currentDirectory: currentDirectory
         )
-        let inferenceRuntime = try LambdaDeckRuntimeFactory.makeRuntime(resolvedModel: resolvedModel)
+        let inferenceRuntimeProvider = resolvedModel.isStub
+            ? nil
+            : LambdaDeckRuntimeProvider(resolvedModel: resolvedModel, preload: true)
         return LambdaDeckServerConfiguration(
             host: options.host,
             port: options.port,
             resolvedModel: resolvedModel,
-            inferenceRuntime: inferenceRuntime
+            inferenceRuntimeProvider: inferenceRuntimeProvider
         )
     }
 }
@@ -72,6 +82,7 @@ public enum LambdaDeckServer {
         let router = Router()
         let modelID = configuration.resolvedModel.modelID
         let inferenceRuntime = configuration.inferenceRuntime
+        let inferenceRuntimeProvider = configuration.inferenceRuntimeProvider
 
         router.get("v1/models") { _, _ async -> Response in
             jsonResponse(
@@ -85,7 +96,9 @@ public enum LambdaDeckServer {
                 request: request,
                 modelID: modelID,
                 runtime: inferenceRuntime,
+                runtimeProvider: inferenceRuntimeProvider,
                 maxRequestBodyBytes: configuration.maxRequestBodyBytes,
+                runtimeWarmupTimeoutNanoseconds: configuration.runtimeWarmupTimeoutNanoseconds,
                 streamChunkDelayNanoseconds: configuration.streamChunkDelayNanoseconds
             )
         }
@@ -104,7 +117,9 @@ public enum LambdaDeckServer {
         request: Request,
         modelID: String,
         runtime: (any LambdaDeckInferenceRuntime)?,
+        runtimeProvider: LambdaDeckRuntimeProvider?,
         maxRequestBodyBytes: Int,
+        runtimeWarmupTimeoutNanoseconds: UInt64,
         streamChunkDelayNanoseconds: UInt64
     ) async -> Response {
         do {
@@ -122,12 +137,36 @@ public enum LambdaDeckServer {
                 )
             }
 
-            if chatRequest.stream == true {
+            let resolvedRuntime: (any LambdaDeckInferenceRuntime)?
+            do {
                 if let runtime {
+                    resolvedRuntime = runtime
+                } else if let runtimeProvider {
+                    resolvedRuntime = try await runtimeProvider.runtimeInstance(
+                        maxWaitNanoseconds: runtimeWarmupTimeoutNanoseconds
+                    )
+                } else {
+                    resolvedRuntime = nil
+                }
+            } catch let runtimeError as LambdaDeckRuntimeError {
+                switch runtimeError {
+                case .invalidRequest(let message):
+                    return invalidRequestResponse(message)
+                case .runtimeWarmingUp(let message):
+                    return serviceUnavailableResponse(message)
+                default:
+                    return internalErrorResponse(runtimeError.localizedDescription)
+                }
+            } catch {
+                return internalErrorResponse("runtime inference initialization failed")
+            }
+
+            if chatRequest.stream == true {
+                if let resolvedRuntime {
                     return streamingResponse(
                         modelID: modelID,
                         request: chatRequest,
-                        runtime: runtime,
+                        runtime: resolvedRuntime,
                         streamChunkDelayNanoseconds: streamChunkDelayNanoseconds
                     )
                 }
@@ -137,9 +176,9 @@ public enum LambdaDeckServer {
                 )
             }
 
-            if let runtime {
+            if let resolvedRuntime {
                 do {
-                    let completion = try await runtime.complete(request: chatRequest)
+                    let completion = try await resolvedRuntime.complete(request: chatRequest)
                     return jsonResponse(
                         status: .ok,
                         payload: OpenAIChatCompletionResponse(
@@ -240,6 +279,18 @@ public enum LambdaDeckServer {
     static func internalErrorResponse(_ message: String) -> Response {
         jsonResponse(
             status: .internalServerError,
+            payload: OpenAIErrorResponse(
+                error: OpenAIErrorBody(
+                    message: message,
+                    type: "server_error"
+                )
+            )
+        )
+    }
+
+    static func serviceUnavailableResponse(_ message: String) -> Response {
+        jsonResponse(
+            status: .serviceUnavailable,
             payload: OpenAIErrorResponse(
                 error: OpenAIErrorBody(
                     message: message,

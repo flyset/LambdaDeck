@@ -261,6 +261,113 @@ final class OpenAIContractIntegrationTests: XCTestCase {
         }
     }
 
+    func testChatCompletionsUsesRuntimeProviderWhenConfigured() async throws {
+        let runtime = TestRuntime(
+            completion: LambdaDeckRuntimeCompletion(
+                content: "Provider runtime response.",
+                finishReason: "stop",
+                usage: OpenAIUsage(promptTokens: 8, completionTokens: 3, totalTokens: 11)
+            ),
+            streamTokens: ["unused"],
+            finishReason: "stop",
+            usage: OpenAIUsage(promptTokens: 8, completionTokens: 3, totalTokens: 11)
+        )
+        let resolvedModel = LambdaDeckResolvedModel(
+            modelID: "provider-model",
+            modelPath: "/tmp/provider-model",
+            source: .cliModelPath
+        )
+        let provider = LambdaDeckRuntimeProvider(
+            resolvedModel: resolvedModel,
+            preload: false,
+            runtimeLoader: { _ in runtime }
+        )
+        let configuration = LambdaDeckServerConfiguration(
+            host: "127.0.0.1",
+            port: 8080,
+            resolvedModel: resolvedModel,
+            inferenceRuntimeProvider: provider
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+        let requestBody = try chatRequestBody(
+            OpenAIChatCompletionsRequest(
+                model: "provider-model",
+                messages: [OpenAIChatMessage(role: "user", content: "Say hello")],
+                stream: false
+            )
+        )
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(
+                uri: "/v1/chat/completions",
+                method: .post,
+                headers: [.contentType: "application/json"],
+                body: requestBody
+            )
+
+            XCTAssertEqual(response.status, .ok)
+            let payload = try JSONDecoder().decode(OpenAIChatCompletionResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.model, "provider-model")
+            XCTAssertEqual(payload.choices.first?.message.content, "Provider runtime response.")
+            XCTAssertEqual(payload.usage, OpenAIUsage(promptTokens: 8, completionTokens: 3, totalTokens: 11))
+        }
+    }
+
+    func testChatCompletionsReturnsServiceUnavailableWhenRuntimeProviderIsWarmingUp() async throws {
+        let runtime = TestRuntime(
+            completion: LambdaDeckRuntimeCompletion(
+                content: "unused",
+                finishReason: "stop",
+                usage: OpenAIUsage(promptTokens: 0, completionTokens: 0, totalTokens: 0)
+            ),
+            streamTokens: ["unused"],
+            finishReason: "stop",
+            usage: OpenAIUsage(promptTokens: 0, completionTokens: 0, totalTokens: 0)
+        )
+        let resolvedModel = LambdaDeckResolvedModel(
+            modelID: "warming-model",
+            modelPath: "/tmp/warming-model",
+            source: .cliModelPath
+        )
+        let provider = LambdaDeckRuntimeProvider(
+            resolvedModel: resolvedModel,
+            preload: false,
+            runtimeLoader: { _ in
+                try await Task.sleep(nanoseconds: 100_000_000)
+                return runtime
+            }
+        )
+        let configuration = LambdaDeckServerConfiguration(
+            host: "127.0.0.1",
+            port: 8080,
+            resolvedModel: resolvedModel,
+            inferenceRuntimeProvider: provider,
+            runtimeWarmupTimeoutNanoseconds: 10_000_000
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+        let requestBody = try chatRequestBody(
+            OpenAIChatCompletionsRequest(
+                model: "warming-model",
+                messages: [OpenAIChatMessage(role: "user", content: "Say hello")],
+                stream: false
+            )
+        )
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(
+                uri: "/v1/chat/completions",
+                method: .post,
+                headers: [.contentType: "application/json"],
+                body: requestBody
+            )
+
+            XCTAssertEqual(response.status, .serviceUnavailable)
+            let payload = try JSONDecoder().decode(OpenAIErrorResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.error.message, "runtime is still initializing; retry shortly")
+            XCTAssertEqual(payload.error.type, "server_error")
+        }
+    }
+
     func testLocalOnlyRealInferenceHarnessSkipsWithoutModelPath() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let modelPath = environment["LAMBDADECK_REAL_MODEL_PATH"], !modelPath.isEmpty else {
