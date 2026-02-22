@@ -44,3 +44,7 @@ Put local model bundles under `Models/` (repo-relative). Model artifacts are int
 - Track 1 (OpenAI-compatible server contract): completed.
 - Track 3 (Swift Core ML inference runtime): completed.
 - Track 4 (Swift Core ML TTFT optimization): completed.
+
+## License
+
+Apache License 2.0. See `LICENSE`.
