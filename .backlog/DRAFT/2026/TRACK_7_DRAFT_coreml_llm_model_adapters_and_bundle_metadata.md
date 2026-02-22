@@ -59,9 +59,9 @@ Plan (execution steps)
 
 Inventory
 - **Current inventory**
-  - Server routing + OpenAI contract: `Sources/LambdaDeckCore/LambdaDeckServer.swift`, `Sources/LambdaDeckCore/OpenAIContracts.swift`
-  - Runtime provider + warmup behavior: `Sources/LambdaDeckCore/InferenceRuntime.swift`
-  - Bootstrap/config/model discovery: `Sources/LambdaDeckCLI/*`, `Sources/LambdaDeckCore/*` (exact files to enumerate when implementing)
+  - Server routing + OpenAI contract: `Sources/LambdaDeckCore/Server/LambdaDeckServer.swift`, `Sources/LambdaDeckCore/OpenAI/OpenAIContracts.swift`
+  - Runtime provider + warmup behavior: `Sources/LambdaDeckCore/Runtime/InferenceRuntime.swift`
+  - Bootstrap/config/model discovery: `Sources/LambdaDeckCLI/*`, `Sources/LambdaDeckCore/Discovery/*` (exact files to enumerate when implementing)
   - Integration tests: `Tests/LambdaDeckIntegrationTests/OpenAIContractIntegrationTests.swift`
 
 Artifacts
