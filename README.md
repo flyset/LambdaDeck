@@ -5,6 +5,7 @@ LambdaDeck is a local, on-device LLM runtime/server effort. The near-term goal i
 Status:
 - Build + test pipeline (SwiftPM + CI) is in place.
 - OpenAI-compatible `/v1/models` and `/v1/chat/completions` (non-stream + SSE) are implemented.
+- Operator readiness endpoint `/readyz` is implemented (`200` ready, `503` warming/failed).
 - Swift Core ML runtime integration is available for local model bundles via `--model-path`.
 - Real inference TTFT is improved for Gemma3 chunked bundles via hybrid batched prefill; server may return `503` while the runtime is warming up (clients should retry).
 
@@ -47,7 +48,14 @@ Put local model bundles under `Models/` (repo-relative). Model artifacts are int
 Implemented (v1 subset):
 
 - `GET /v1/models`
+- `GET /readyz`
 - `POST /v1/chat/completions` (non-streaming and SSE streaming via `stream=true`)
+
+Readiness semantics:
+
+- `GET /readyz` returns `200` with `{"status":"ready",...}` when runtime is ready.
+- `GET /readyz` returns `503` with `{"status":"warming_up",...}` while runtime warmup is in progress.
+- `GET /readyz` returns `503` with `{"status":"failed",...,"error":"..."}` if runtime warmup failed.
 
 Not implemented (v1): auth, tool/function calling, and the rest of the OpenAI API surface.
 
@@ -55,10 +63,12 @@ Model support note: real inference is currently validated primarily for Gemma-fa
 
 ## Tracks
 
-- Track 2 (build system pipeline): completed.
 - Track 1 (OpenAI-compatible server contract): completed.
+- Track 2 (build system pipeline): completed.
 - Track 3 (Swift Core ML inference runtime): completed.
 - Track 4 (Swift Core ML TTFT optimization): completed.
+- Track 5 (CLI subcommand/help rework): completed.
+- Track 6 (operator runtime readiness visibility): completed.
 
 ## License
 

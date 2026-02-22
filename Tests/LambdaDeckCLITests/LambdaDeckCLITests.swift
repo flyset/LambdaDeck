@@ -108,4 +108,35 @@ final class LambdaDeckCLITests: XCTestCase {
 
         XCTAssertEqual(payload.object, "chat.completion")
     }
+
+    func testStartupLifecycleLogMessagesAreDeterministic() {
+        XCTAssertEqual(
+            LambdaDeckStartupLogs.resolvingConfiguration(),
+            "startup: resolving configuration"
+        )
+        XCTAssertEqual(
+            LambdaDeckStartupLogs.serverListening(
+                host: "127.0.0.1",
+                port: 8080,
+                modelID: "stub-model",
+                source: "stubFlag"
+            ),
+            "startup: server listening on http://127.0.0.1:8080 model=stub-model source=stubFlag"
+        )
+        XCTAssertEqual(
+            LambdaDeckStartupLogs.runtimeWarmupStarted(),
+            "startup: runtime warmup started"
+        )
+        XCTAssertEqual(
+            LambdaDeckStartupLogs.runtimeReady(elapsedMilliseconds: 123),
+            "startup: runtime ready (elapsed=123ms)"
+        )
+        XCTAssertEqual(
+            LambdaDeckStartupLogs.runtimeFailed(
+                elapsedMilliseconds: 456,
+                error: "line 1\nline 2"
+            ),
+            "startup: runtime failed (elapsed=456ms error=line 1 line 2)"
+        )
+    }
 }

@@ -38,6 +38,154 @@ final class OpenAIContractIntegrationTests: XCTestCase {
         }
     }
 
+    func testReadyzEndpointReturnsReadyInStubMode() async throws {
+        let configuration = try LambdaDeckServerBootstrap.resolveConfiguration(
+            options: LambdaDeckServeOptions(stubMode: true)
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(uri: "/readyz", method: .get)
+            XCTAssertEqual(response.status, .ok)
+
+            let payload = try JSONDecoder().decode(LambdaDeckReadinessResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.status, .ready)
+            XCTAssertEqual(payload.model, StubChatFixtures.modelID)
+            XCTAssertGreaterThanOrEqual(payload.elapsedMilliseconds, 0)
+            XCTAssertNil(payload.error)
+        }
+    }
+
+    func testReadyzEndpointReturnsWarmingUpWhenRuntimeProviderIsLoading() async throws {
+        let runtime = TestRuntime(
+            completion: LambdaDeckRuntimeCompletion(
+                content: "unused",
+                finishReason: "stop",
+                usage: OpenAIUsage(promptTokens: 0, completionTokens: 0, totalTokens: 0)
+            ),
+            streamTokens: ["unused"],
+            finishReason: "stop",
+            usage: OpenAIUsage(promptTokens: 0, completionTokens: 0, totalTokens: 0)
+        )
+        let resolvedModel = LambdaDeckResolvedModel(
+            modelID: "warming-model",
+            modelPath: "/tmp/warming-model",
+            source: .cliModelPath
+        )
+        let provider = LambdaDeckRuntimeProvider(
+            resolvedModel: resolvedModel,
+            preload: false,
+            runtimeLoader: { _ in
+                try await Task.sleep(nanoseconds: 300_000_000)
+                return runtime
+            }
+        )
+        let configuration = LambdaDeckServerConfiguration(
+            host: "127.0.0.1",
+            port: 8080,
+            resolvedModel: resolvedModel,
+            inferenceRuntimeProvider: provider
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(uri: "/readyz", method: .get)
+            XCTAssertEqual(response.status, .serviceUnavailable)
+
+            let payload = try JSONDecoder().decode(LambdaDeckReadinessResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.status, .warmingUp)
+            XCTAssertEqual(payload.model, "warming-model")
+            XCTAssertGreaterThanOrEqual(payload.elapsedMilliseconds, 0)
+            XCTAssertNil(payload.error)
+        }
+    }
+
+    func testReadyzEndpointReturnsReadyAfterRuntimeWarmupCompletes() async throws {
+        let runtime = TestRuntime(
+            completion: LambdaDeckRuntimeCompletion(
+                content: "Provider runtime response.",
+                finishReason: "stop",
+                usage: OpenAIUsage(promptTokens: 8, completionTokens: 3, totalTokens: 11)
+            ),
+            streamTokens: ["unused"],
+            finishReason: "stop",
+            usage: OpenAIUsage(promptTokens: 8, completionTokens: 3, totalTokens: 11)
+        )
+        let resolvedModel = LambdaDeckResolvedModel(
+            modelID: "ready-model",
+            modelPath: "/tmp/ready-model",
+            source: .cliModelPath
+        )
+        let provider = LambdaDeckRuntimeProvider(
+            resolvedModel: resolvedModel,
+            preload: false,
+            runtimeLoader: { _ in
+                runtime
+            }
+        )
+        _ = try await provider.runtimeInstance()
+
+        let configuration = LambdaDeckServerConfiguration(
+            host: "127.0.0.1",
+            port: 8080,
+            resolvedModel: resolvedModel,
+            inferenceRuntimeProvider: provider
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(uri: "/readyz", method: .get)
+            XCTAssertEqual(response.status, .ok)
+
+            let payload = try JSONDecoder().decode(LambdaDeckReadinessResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.status, .ready)
+            XCTAssertEqual(payload.model, "ready-model")
+            XCTAssertGreaterThanOrEqual(payload.elapsedMilliseconds, 0)
+            XCTAssertNil(payload.error)
+        }
+    }
+
+    func testReadyzEndpointReturnsFailedWhenRuntimeWarmupFails() async throws {
+        let resolvedModel = LambdaDeckResolvedModel(
+            modelID: "failed-model",
+            modelPath: "/tmp/failed-model",
+            source: .cliModelPath
+        )
+        let provider = LambdaDeckRuntimeProvider(
+            resolvedModel: resolvedModel,
+            preload: false,
+            runtimeLoader: { _ in
+                throw LambdaDeckRuntimeError.runtimeFailure("simulated warmup failure")
+            }
+        )
+
+        do {
+            _ = try await provider.runtimeInstance()
+            XCTFail("Expected runtime warmup failure")
+        } catch let runtimeError as LambdaDeckRuntimeError {
+            XCTAssertEqual(runtimeError, .runtimeFailure("simulated warmup failure"))
+        }
+
+        let configuration = LambdaDeckServerConfiguration(
+            host: "127.0.0.1",
+            port: 8080,
+            resolvedModel: resolvedModel,
+            inferenceRuntimeProvider: provider
+        )
+        let app = LambdaDeckServer.makeApplication(configuration: configuration)
+
+        try await app.test(.router) { client in
+            let response = try await client.execute(uri: "/readyz", method: .get)
+            XCTAssertEqual(response.status, .serviceUnavailable)
+
+            let payload = try JSONDecoder().decode(LambdaDeckReadinessResponse.self, from: data(from: response.body))
+            XCTAssertEqual(payload.status, .failed)
+            XCTAssertEqual(payload.model, "failed-model")
+            XCTAssertGreaterThanOrEqual(payload.elapsedMilliseconds, 0)
+            XCTAssertEqual(payload.error, "simulated warmup failure")
+        }
+    }
+
     func testChatCompletionsNonStreamReturnsFixture() async throws {
         let configuration = try LambdaDeckServerBootstrap.resolveConfiguration(
             options: LambdaDeckServeOptions(stubMode: true)

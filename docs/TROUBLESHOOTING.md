@@ -52,6 +52,7 @@
 ### SYMPTOMS
 
 - First token takes a very long time to arrive (high TTFT), especially with large prompts.
+- `GET /readyz` returns `503` with readiness payload status `warming_up` or `failed`.
 - During startup, `POST /v1/chat/completions` returns `503` with an OpenAI-shaped error:
   - `{"error":{"type":"server_error","message":"runtime is still initializing; retry shortly"}}`
 
@@ -62,6 +63,10 @@
 
 ### FIX / MITIGATION
 
-- Retry on `503` with a short backoff.
+- Use `GET /readyz` to gate traffic:
+  - `200` + `{"status":"ready",...}` means runtime is ready.
+  - `503` + `{"status":"warming_up",...}` means keep retrying with backoff.
+  - `503` + `{"status":"failed",...,"error":"..."}` means startup failed; inspect logs and model path/runtime compatibility.
+- Retry chat on `503` with a short backoff while readiness is `warming_up`.
 - Reduce the size of mostly-static system prompts (for example large agent instructions or embedded repo docs).
 - Sanity check with a minimal prompt to separate "prompt size" issues from runtime load issues.

@@ -91,6 +91,14 @@ public enum LambdaDeckServer {
             )
         }
 
+        router.get("readyz") { _, _ async -> Response in
+            await readinessResponse(
+                modelID: modelID,
+                runtime: inferenceRuntime,
+                runtimeProvider: inferenceRuntimeProvider
+            )
+        }
+
         router.post("v1/chat/completions") { request, _ async -> Response in
             await handleChatCompletions(
                 request: request,
@@ -215,6 +223,48 @@ public enum LambdaDeckServer {
         } catch {
             return invalidRequestResponse("invalid JSON body for /v1/chat/completions")
         }
+    }
+
+    static func readinessResponse(
+        modelID: String,
+        runtime: (any LambdaDeckInferenceRuntime)?,
+        runtimeProvider: LambdaDeckRuntimeProvider?
+    ) async -> Response {
+        if runtime != nil {
+            return jsonResponse(
+                status: .ok,
+                payload: LambdaDeckReadinessResponse(
+                    status: .ready,
+                    model: modelID,
+                    elapsedMilliseconds: 0
+                )
+            )
+        }
+
+        if let runtimeProvider {
+            let readiness = await runtimeProvider.readinessSnapshot()
+            let payload = LambdaDeckReadinessResponse(
+                status: readiness.status,
+                model: modelID,
+                elapsedMilliseconds: readiness.elapsedMilliseconds,
+                error: readiness.error
+            )
+            switch readiness.status {
+            case .ready:
+                return jsonResponse(status: .ok, payload: payload)
+            case .warmingUp, .failed:
+                return jsonResponse(status: .serviceUnavailable, payload: payload)
+            }
+        }
+
+        return jsonResponse(
+            status: .ok,
+            payload: LambdaDeckReadinessResponse(
+                status: .ready,
+                model: modelID,
+                elapsedMilliseconds: 0
+            )
+        )
     }
 
     static func streamingResponse(modelID: String, streamChunkDelayNanoseconds: UInt64) -> Response {

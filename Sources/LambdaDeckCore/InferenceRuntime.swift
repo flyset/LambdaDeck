@@ -396,6 +396,18 @@ public enum LambdaDeckRuntimeFactory {
     }
 }
 
+public struct LambdaDeckRuntimeReadinessSnapshot: Sendable, Equatable {
+    public let status: LambdaDeckReadinessStatus
+    public let elapsedMilliseconds: Int
+    public let error: String?
+
+    public init(status: LambdaDeckReadinessStatus, elapsedMilliseconds: Int, error: String? = nil) {
+        self.status = status
+        self.elapsedMilliseconds = elapsedMilliseconds
+        self.error = error
+    }
+}
+
 public actor LambdaDeckRuntimeProvider {
     typealias RuntimeLoader = @Sendable (LambdaDeckResolvedModel) async throws -> (any LambdaDeckInferenceRuntime)?
 
@@ -403,6 +415,7 @@ public actor LambdaDeckRuntimeProvider {
     private let runtimeLoader: RuntimeLoader
     private var runtime: (any LambdaDeckInferenceRuntime)?
     private var preloadTask: Task<Void, Never>?
+    private var preloadStartedAtNanoseconds: UInt64?
     private var isLoading: Bool
     private var cachedError: LambdaDeckRuntimeError?
 
@@ -425,6 +438,7 @@ public actor LambdaDeckRuntimeProvider {
         self.runtimeLoader = runtimeLoader
         self.runtime = nil
         self.preloadTask = nil
+        self.preloadStartedAtNanoseconds = nil
         self.isLoading = false
         self.cachedError = nil
         if preload {
@@ -461,12 +475,38 @@ public actor LambdaDeckRuntimeProvider {
         }
     }
 
+    public func readinessSnapshot() -> LambdaDeckRuntimeReadinessSnapshot {
+        self.startPreloadIfNeeded()
+
+        let elapsedMilliseconds = self.elapsedMillisecondsSincePreloadStart()
+        if self.runtime != nil {
+            return LambdaDeckRuntimeReadinessSnapshot(
+                status: .ready,
+                elapsedMilliseconds: elapsedMilliseconds
+            )
+        }
+
+        if let cachedError {
+            return LambdaDeckRuntimeReadinessSnapshot(
+                status: .failed,
+                elapsedMilliseconds: elapsedMilliseconds,
+                error: cachedError.localizedDescription
+            )
+        }
+
+        return LambdaDeckRuntimeReadinessSnapshot(
+            status: .warmingUp,
+            elapsedMilliseconds: elapsedMilliseconds
+        )
+    }
+
     private func startPreloadIfNeeded() {
         if self.isLoading || self.runtime != nil || self.cachedError != nil {
             return
         }
 
         self.isLoading = true
+        self.preloadStartedAtNanoseconds = DispatchTime.now().uptimeNanoseconds
         let resolvedModel = self.resolvedModel
         let runtimeLoader = self.runtimeLoader
         self.preloadTask = Task.detached(priority: .utility) {
@@ -495,5 +535,13 @@ public actor LambdaDeckRuntimeProvider {
             self.runtime = nil
             self.cachedError = error
         }
+    }
+
+    private func elapsedMillisecondsSincePreloadStart() -> Int {
+        guard let preloadStartedAtNanoseconds else {
+            return 0
+        }
+        let elapsedNanoseconds = DispatchTime.now().uptimeNanoseconds - preloadStartedAtNanoseconds
+        return Int(elapsedNanoseconds / 1_000_000)
     }
 }

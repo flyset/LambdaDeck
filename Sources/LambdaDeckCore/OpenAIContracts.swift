@@ -279,6 +279,38 @@ public struct OpenAIErrorResponse: Codable, Equatable, Sendable {
     }
 }
 
+public enum LambdaDeckReadinessStatus: String, Codable, Equatable, Sendable {
+    case warmingUp = "warming_up"
+    case ready
+    case failed
+}
+
+public struct LambdaDeckReadinessResponse: Codable, Equatable, Sendable {
+    public let status: LambdaDeckReadinessStatus
+    public let model: String
+    public let elapsedMilliseconds: Int
+    public let error: String?
+
+    public init(
+        status: LambdaDeckReadinessStatus,
+        model: String,
+        elapsedMilliseconds: Int,
+        error: String? = nil
+    ) {
+        self.status = status
+        self.model = model
+        self.elapsedMilliseconds = elapsedMilliseconds
+        self.error = error
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case model
+        case elapsedMilliseconds = "elapsed_ms"
+        case error
+    }
+}
+
 public enum OpenAIJSON {
     public static func encodeToString(_ value: some Encodable) throws -> String {
         let encoder = JSONEncoder()

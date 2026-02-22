@@ -35,6 +35,8 @@ swift run lambdadeck serve --stub --port 8080
 Example checks:
 
 ```bash
+curl http://127.0.0.1:8080/readyz
+
 curl http://127.0.0.1:8080/v1/models
 
 curl -H "content-type: application/json" \
@@ -57,6 +59,8 @@ swift run lambdadeck serve --model-path "Models/<bundle-dir-or-mlmodelc>" --port
 Example checks:
 
 ```bash
+curl http://127.0.0.1:8080/readyz
+
 curl http://127.0.0.1:8080/v1/models
 
 curl -H "content-type: application/json" \
@@ -73,6 +77,7 @@ curl -N -H "content-type: application/json" \
 Notes:
 - TTFT (time-to-first-token) is dominated by prompt prefill (building the model KV cache inside Core ML `MLState`). Large, mostly-static system prompts (for example OpenCode agent instructions) can dominate TTFT.
 - When running real inference, the server may return `503` while the runtime is still warming up. Clients should retry.
+- Prefer checking `GET /readyz` for operator readiness (`200` ready, `503` warming_up/failed) instead of inferring readiness only from chat requests.
 
 Local measurement helper (streaming TTFT), comparing a large vs stripped system prompt:
 

@@ -20,7 +20,7 @@ def _get_model_id(base: str, timeout_s: float) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Poll chat until LambdaDeck runtime warmup completes")
+    parser = argparse.ArgumentParser(description="Poll /readyz until LambdaDeck runtime warmup completes")
     parser.add_argument("--base", default="http://127.0.0.1:8080", help="Server base URL")
     parser.add_argument("--model", default="", help="Model id (defaults to first /v1/models entry)")
     parser.add_argument("--timeout", type=float, default=180, help="Total probe timeout seconds")
@@ -31,13 +31,6 @@ def main() -> int:
     model = args.model
     if not model:
         model = _get_model_id(base, timeout_s=5)
-
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
-        "stream": False,
-    }
 
     started = time.time()
     attempt = 0
@@ -58,21 +51,28 @@ def main() -> int:
             )
             return 2
 
-        req = urllib.request.Request(
-            base + "/v1/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
         t0 = time.time()
+        status = 0
+        body = ""
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                _ = r.read()
+            with urllib.request.urlopen(base + "/readyz", timeout=30) as r:
+                body = r.read().decode("utf-8")
                 status = r.status
         except urllib.error.HTTPError as e:
             status = e.code
+            body = e.read().decode("utf-8", "ignore")
 
         dt_ms = int((time.time() - t0) * 1000)
-        if status == 200:
+        payload = {}
+        if body:
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = {}
+
+        readiness_status = payload.get("status")
+
+        if status == 200 and readiness_status == "ready":
             print(
                 json.dumps(
                     {
@@ -87,6 +87,28 @@ def main() -> int:
             )
             return 0
 
+        if status == 503 and readiness_status == "warming_up":
+            time.sleep(args.interval)
+            continue
+
+        if status == 503 and readiness_status == "failed":
+            print(
+                json.dumps(
+                    {
+                        "base": base,
+                        "model": model,
+                        "ready": False,
+                        "attempt": attempt,
+                        "status": status,
+                        "readiness_status": readiness_status,
+                        "error": payload.get("error", "runtime warmup failed"),
+                        "attempt_ms": dt_ms,
+                        "elapsed_ms": int((time.time() - started) * 1000),
+                    }
+                )
+            )
+            return 1
+
         if status != 503:
             print(
                 json.dumps(
@@ -96,14 +118,13 @@ def main() -> int:
                         "ready": False,
                         "attempt": attempt,
                         "status": status,
+                        "readiness_status": readiness_status,
                         "attempt_ms": dt_ms,
                         "elapsed_ms": int((time.time() - started) * 1000),
                     }
                 )
             )
             return 1
-
-        time.sleep(args.interval)
 
 
 if __name__ == "__main__":
