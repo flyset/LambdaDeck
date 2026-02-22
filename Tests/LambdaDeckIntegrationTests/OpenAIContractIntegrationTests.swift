@@ -477,11 +477,17 @@ final class OpenAIContractIntegrationTests: XCTestCase {
             modelPath: "/tmp/warming-model",
             source: .cliModelPath
         )
+        let runtimeLoaderGate = RuntimeLoaderGate()
+        defer {
+            Task {
+                await runtimeLoaderGate.open()
+            }
+        }
         let provider = LambdaDeckRuntimeProvider(
             resolvedModel: resolvedModel,
             preload: false,
             runtimeLoader: { _ in
-                try await Task.sleep(nanoseconds: 100_000_000)
+                await runtimeLoaderGate.wait()
                 return runtime
             }
         )
@@ -502,6 +508,15 @@ final class OpenAIContractIntegrationTests: XCTestCase {
         )
 
         try await app.test(.router) { client in
+            let readinessResponse = try await client.execute(uri: "/readyz", method: .get)
+            XCTAssertEqual(readinessResponse.status, .serviceUnavailable)
+
+            let readinessPayload = try JSONDecoder().decode(
+                LambdaDeckReadinessResponse.self,
+                from: data(from: readinessResponse.body)
+            )
+            XCTAssertEqual(readinessPayload.status, .warmingUp)
+
             let response = try await client.execute(
                 uri: "/v1/chat/completions",
                 method: .post,
@@ -598,4 +613,36 @@ private final class DisconnectingWriter: ResponseBodyWriter {
     }
 
     func finish(_ trailingHeaders: HTTPFields?) async throws {}
+}
+
+private actor RuntimeLoaderGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !self.isOpen else {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            if self.isOpen {
+                continuation.resume()
+                return
+            }
+            self.waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        guard !self.isOpen else {
+            return
+        }
+
+        self.isOpen = true
+        let continuations = self.waiters
+        self.waiters.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
 }
