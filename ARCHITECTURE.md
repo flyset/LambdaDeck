@@ -29,8 +29,8 @@ LambdaDeck is a Swift-native, OpenAI-compatible HTTP server for on-device Core M
   - Adapter contracts, resolver, and per-family implementations.
   - Files: `Contracts/ModelAdapterTypes.swift`, `Resolver/ModelAdapterResolver.swift`, `ANEMLL/ANEMLLModelAdapter.swift`, `LambdaDeckMetadata/LambdaDeckMetadataModelAdapter.swift`.
 - `Bundles/`
-  - LambdaDeck-owned bundle metadata schema loader + validation.
-  - File: `LambdaDeckBundleMetadata.swift`.
+  - Metadata contracts, loader, schema decode, validation, and path resolution.
+  - Files: `Contracts/BundleMetadataTypes.swift`, `Loader/BundleMetadataLoader.swift`, `Schema/RawBundleMetadataV1.swift`, `Validation/BundleMetadataValidator.swift`, `Errors/BundleMetadataError.swift`, `Internal/BundlePathResolver.swift`.
 - `Tokenizers/`
   - Tokenizer implementations used by runtime code.
   - File: `GemmaBPETokenizer.swift`.

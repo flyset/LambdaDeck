@@ -326,6 +326,105 @@ final class LambdaDeckCoreTests: XCTestCase {
         }
     }
 
+    func testLambdaDeckMetadataValidationErrorsWhenSchemaVersionUnsupported() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("metadata-schema")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+            _ = try createModelDirectory(named: "model.mlmodelc", in: bundle)
+            try writeLambdaDeckMetadata(
+                modelID: "metadata-schema",
+                schemaVersion: 2,
+                in: bundle
+            )
+
+            XCTAssertThrowsError(
+                try LambdaDeckBundleMetadataLoader.loadResolved(fromBundlePath: bundle.path)
+            ) { error in
+                XCTAssertEqual(error as? LambdaDeckBundleMetadataError, .unsupportedSchemaVersion(2))
+            }
+        }
+    }
+
+    func testLambdaDeckMetadataValidationErrorsWhenModelIDMissing() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("metadata-model-id")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+            _ = try createModelDirectory(named: "model.mlmodelc", in: bundle)
+            try writeLambdaDeckMetadata(
+                modelID: "   ",
+                in: bundle
+            )
+
+            XCTAssertThrowsError(
+                try LambdaDeckBundleMetadataLoader.loadResolved(fromBundlePath: bundle.path)
+            ) { error in
+                XCTAssertEqual(error as? LambdaDeckBundleMetadataError, .missingModelID)
+            }
+        }
+    }
+
+    func testLambdaDeckMetadataValidationErrorsWhenAdapterKindUnsupported() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("metadata-adapter")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+            _ = try createModelDirectory(named: "model.mlmodelc", in: bundle)
+            try writeLambdaDeckMetadata(
+                modelID: "metadata-adapter",
+                adapterKind: "coreml.chunked",
+                in: bundle
+            )
+
+            XCTAssertThrowsError(
+                try LambdaDeckBundleMetadataLoader.loadResolved(fromBundlePath: bundle.path)
+            ) { error in
+                XCTAssertEqual(error as? LambdaDeckBundleMetadataError, .unsupportedAdapterKind("coreml.chunked"))
+            }
+        }
+    }
+
+    func testLambdaDeckMetadataValidationErrorsWhenPromptFormatUnsupported() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("metadata-prompt")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+            _ = try createModelDirectory(named: "model.mlmodelc", in: bundle)
+            try writeLambdaDeckMetadata(
+                modelID: "metadata-prompt",
+                promptFormat: "qwen3_chatml",
+                in: bundle
+            )
+
+            XCTAssertThrowsError(
+                try LambdaDeckBundleMetadataLoader.loadResolved(fromBundlePath: bundle.path)
+            ) { error in
+                XCTAssertEqual(error as? LambdaDeckBundleMetadataError, .unsupportedPromptFormat("qwen3_chatml"))
+            }
+        }
+    }
+
+    func testLambdaDeckMetadataValidationErrorsWhenMonolithicModelPathMissing() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("metadata-missing-model")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+            _ = try createModelDirectory(named: "model.mlmodelc", in: bundle)
+            try writeLambdaDeckMetadata(
+                modelID: "metadata-missing-model",
+                monolithicModel: nil,
+                in: bundle
+            )
+
+            XCTAssertThrowsError(
+                try LambdaDeckBundleMetadataLoader.loadResolved(fromBundlePath: bundle.path)
+            ) { error in
+                XCTAssertEqual(error as? LambdaDeckBundleMetadataError, .missingMonolithicModelPath)
+            }
+        }
+    }
+
     func testStubInferenceRuntimeIsDeterministic() async throws {
         let runtime = StubInferenceRuntime()
         let request = OpenAIChatCompletionsRequest(
@@ -425,32 +524,33 @@ final class LambdaDeckCoreTests: XCTestCase {
         return bundle
     }
 
-    private func writeLambdaDeckMetadata(modelID: String, in bundle: URL) throws {
-        let metadata = """
-        {
-          "schema_version": 1,
-          "model": {
-            "id": "\(modelID)"
-          },
-          "tokenizer": {
-            "directory": "."
-          },
-          "adapter": {
-            "kind": "coreml.monolithic"
-          },
-          "runtime": {
-            "monolithic_model": "model.mlmodelc",
-            "context_length": 2048
-          },
-          "prompt": {
-            "format": "chat_transcript"
-          }
+    private func writeLambdaDeckMetadata(
+        modelID: String,
+        schemaVersion: Int = 1,
+        tokenizerDirectory: String = ".",
+        adapterKind: String = "coreml.monolithic",
+        monolithicModel: String? = "model.mlmodelc",
+        promptFormat: String? = "chat_transcript",
+        in bundle: URL
+    ) throws {
+        var runtime: [String: Any] = ["context_length": 2048]
+        if let monolithicModel {
+            runtime["monolithic_model"] = monolithicModel
         }
-        """
-        try metadata.write(
-            to: bundle.appendingPathComponent("lambdadeck.bundle.json"),
-            atomically: true,
-            encoding: .utf8
-        )
+
+        var metadata: [String: Any] = [
+            "schema_version": schemaVersion,
+            "model": ["id": modelID],
+            "tokenizer": ["directory": tokenizerDirectory],
+            "adapter": ["kind": adapterKind],
+            "runtime": runtime,
+        ]
+
+        if let promptFormat {
+            metadata["prompt"] = ["format": promptFormat]
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: bundle.appendingPathComponent("lambdadeck.bundle.json"))
     }
 }

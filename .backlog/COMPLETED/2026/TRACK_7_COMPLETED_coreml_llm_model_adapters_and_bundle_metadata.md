@@ -60,7 +60,7 @@ Plan (execution steps)
 Inventory
 - **Current inventory**
   - Adapter protocol + selection: `Sources/LambdaDeckCore/Adapters/ModelAdapter.swift`
-  - Bundle metadata spec + validation: `Sources/LambdaDeckCore/Bundles/LambdaDeckBundleMetadata.swift`
+  - Bundle metadata spec + validation: `Sources/LambdaDeckCore/Bundles/Contracts/BundleMetadataTypes.swift`, `Sources/LambdaDeckCore/Bundles/Loader/BundleMetadataLoader.swift`, `Sources/LambdaDeckCore/Bundles/Validation/BundleMetadataValidator.swift`
   - Server bootstrap + model id wiring: `Sources/LambdaDeckCore/Server/LambdaDeckServer.swift`
   - Runtime factory + adapter runtime delegation: `Sources/LambdaDeckCore/Runtime/InferenceRuntime.swift`
   - Discovery support for metadata bundles: `Sources/LambdaDeckCore/Discovery/ModelResolution.swift`
