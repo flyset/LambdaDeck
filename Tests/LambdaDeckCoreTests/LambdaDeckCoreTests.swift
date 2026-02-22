@@ -175,6 +175,66 @@ final class LambdaDeckCoreTests: XCTestCase {
         }
     }
 
+    func testRuntimeInspectorDetectsQwenChunkedBundle() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("qwen-bundle")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+
+            let meta = """
+            model_info:
+              architecture: qwen3
+              parameters:
+                context_length: 2048
+                batch_size: 64
+                embeddings: qwen_embeddings.mlmodelc
+                lm_head: qwen_lm_head.mlmodelc
+                ffn: qwen_FFN_PF_chunk_01of02.mlmodelc
+            """
+            try meta.write(to: bundle.appendingPathComponent("meta.yaml"), atomically: true, encoding: .utf8)
+
+            _ = try createModelDirectory(named: "qwen_embeddings.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "qwen_lm_head.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "qwen_FFN_PF_chunk_01of02.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "qwen_FFN_PF_chunk_02of02.mlmodelc", in: bundle)
+
+            let inventory = try LambdaDeckRuntimeInspector.inspect(modelPath: bundle.path)
+
+            XCTAssertEqual(inventory.adapterKind, .gemma3Chunked)
+            XCTAssertEqual(inventory.architecture, "qwen3")
+            XCTAssertEqual(inventory.ffnChunkPaths.count, 2)
+        }
+    }
+
+    func testRuntimeInspectorDetectsChunkedBundleWithoutArchitecture() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("legacy-qwen-bundle")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+
+            let meta = """
+            model_info:
+              parameters:
+                context_length: 1024
+                batch_size: 64
+                embeddings: qwen_embeddings.mlmodelc
+                lm_head: qwen_lm_head.mlmodelc
+                ffn: qwen_FFN_PF_lut4.mlmodelc
+            """
+            try meta.write(to: bundle.appendingPathComponent("meta.yaml"), atomically: true, encoding: .utf8)
+
+            _ = try createModelDirectory(named: "qwen_embeddings.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "qwen_lm_head.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "qwen_FFN_PF_lut4.mlmodelc", in: bundle)
+
+            let inventory = try LambdaDeckRuntimeInspector.inspect(modelPath: bundle.path)
+
+            XCTAssertEqual(inventory.adapterKind, .gemma3Chunked)
+            XCTAssertNil(inventory.architecture)
+            XCTAssertEqual(inventory.ffnChunkPaths.count, 1)
+        }
+    }
+
     func testModelAdapterResolverPrefersLambdaDeckMetadataWhenPresent() throws {
         try withTemporaryDirectory { directory in
             let bundle = try createLambdaDeckMetadataBundle(modelID: "metadata-model", in: directory)
@@ -211,6 +271,38 @@ final class LambdaDeckCoreTests: XCTestCase {
 
             XCTAssertEqual(adapter.descriptor.kind, .anemll)
             XCTAssertEqual(adapter.descriptor.modelID, "fallback-model")
+        }
+    }
+
+    func testModelAdapterResolverUsesAutoPromptFormatForQwenChunkedBundle() throws {
+        try withTemporaryDirectory { directory in
+            let bundle = directory.appendingPathComponent("qwen-bundle")
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try createTokenizerAssets(in: bundle)
+
+            let meta = """
+            model_info:
+              architecture: qwen3
+              parameters:
+                context_length: 2048
+                embeddings: qwen_embeddings.mlmodelc
+                lm_head: qwen_lm_head.mlmodelc
+                ffn: qwen_FFN_PF_chunk_01of02.mlmodelc
+            """
+            try meta.write(to: bundle.appendingPathComponent("meta.yaml"), atomically: true, encoding: .utf8)
+
+            _ = try createModelDirectory(named: "qwen_embeddings.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "qwen_lm_head.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "qwen_FFN_PF_chunk_01of02.mlmodelc", in: bundle)
+            _ = try createModelDirectory(named: "qwen_FFN_PF_chunk_02of02.mlmodelc", in: bundle)
+
+            let adapter = try LambdaDeckModelAdapterResolver.resolve(
+                modelPath: bundle.path,
+                fallbackModelID: "qwen-test"
+            )
+
+            XCTAssertEqual(adapter.descriptor.kind, .anemll)
+            XCTAssertEqual(adapter.descriptor.promptFormat, .auto)
         }
     }
 

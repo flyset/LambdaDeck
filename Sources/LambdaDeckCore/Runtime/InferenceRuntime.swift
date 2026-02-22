@@ -149,22 +149,21 @@ enum LambdaDeckRuntimeInspector {
                 }
             }
 
-            if architecture == "gemma3" {
-                let embeddingsRel = meta["model_info.parameters.embeddings"] ?? ""
-                let lmHeadRel = meta["model_info.parameters.lm_head"] ?? ""
-                let ffnRel = meta["model_info.parameters.ffn"] ?? ""
+            let embeddingsRel = meta["model_info.parameters.embeddings"] ?? ""
+            let lmHeadRel = meta["model_info.parameters.lm_head"] ?? ""
+            let ffnRel = meta["model_info.parameters.ffn"] ?? ""
+            if !embeddingsRel.isEmpty, !lmHeadRel.isEmpty, !ffnRel.isEmpty {
                 let embeddingsPath = bundleURL.appendingPathComponent(embeddingsRel)
                 let lmHeadPath = bundleURL.appendingPathComponent(lmHeadRel)
                 let ffnPaths = try resolveChunkedFFNPaths(bundleURL: bundleURL, ffnHintRelativePath: ffnRel)
 
-                guard !embeddingsRel.isEmpty,
-                      !lmHeadRel.isEmpty,
-                      FileManager.default.fileExists(atPath: embeddingsPath.path),
+                guard FileManager.default.fileExists(atPath: embeddingsPath.path),
                       FileManager.default.fileExists(atPath: lmHeadPath.path),
                       !ffnPaths.isEmpty
                 else {
+                    let architectureLabel = architecture.isEmpty ? "unknown" : architecture
                     throw LambdaDeckRuntimeError.invalidModelBundle(
-                        "Gemma3 bundle is missing one or more required model parts (embeddings, FFN chunks, LM head)."
+                        "\(architectureLabel) bundle is missing one or more required model parts (embeddings, FFN chunks, LM head)."
                     )
                 }
 
@@ -172,7 +171,7 @@ enum LambdaDeckRuntimeInspector {
                     adapterKind: .gemma3Chunked,
                     modelRoot: bundleURL,
                     tokenizerDirectory: tokenizerDirectory,
-                    architecture: architecture,
+                    architecture: architecture.isEmpty ? nil : architecture,
                     contextLength: contextLength,
                     slidingWindow: slidingWindow,
                     batchSize: batchSize,

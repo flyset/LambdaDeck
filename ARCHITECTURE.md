@@ -24,10 +24,10 @@ LambdaDeck is a Swift-native, OpenAI-compatible HTTP server for on-device Core M
   - File: `ModelResolution.swift`.
 - `Runtime/`
   - Runtime selection, model inspection, warmup/provider lifecycle, and Core ML execution.
-  - Files: `InferenceRuntime.swift`, `CoreMLRuntime.swift`.
+  - Files: `InferenceRuntime.swift`, `CoreMLRuntime.swift`, `RuntimeBuilder.swift`.
 - `Adapters/`
-  - Model-family adapter protocol and adapter selection.
-  - File: `ModelAdapter.swift`.
+  - Adapter contracts, resolver, and per-family implementations.
+  - Files: `Contracts/ModelAdapterTypes.swift`, `Resolver/ModelAdapterResolver.swift`, `ANEMLL/ANEMLLModelAdapter.swift`, `LambdaDeckMetadata/LambdaDeckMetadataModelAdapter.swift`.
 - `Bundles/`
   - LambdaDeck-owned bundle metadata schema loader + validation.
   - File: `LambdaDeckBundleMetadata.swift`.
