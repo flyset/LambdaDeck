@@ -274,7 +274,7 @@ final class LambdaDeckCoreTests: XCTestCase {
         }
     }
 
-    func testModelAdapterResolverUsesAutoPromptFormatForQwenChunkedBundle() throws {
+    func testModelAdapterResolverUsesChatMLPromptFormatForQwenChunkedBundle() throws {
         try withTemporaryDirectory { directory in
             let bundle = directory.appendingPathComponent("qwen-bundle")
             try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
@@ -302,7 +302,9 @@ final class LambdaDeckCoreTests: XCTestCase {
             )
 
             XCTAssertEqual(adapter.descriptor.kind, .anemll)
-            XCTAssertEqual(adapter.descriptor.promptFormat, .auto)
+            XCTAssertEqual(adapter.descriptor.promptFormat, .chatML)
+            XCTAssertEqual(adapter.descriptor.tokenizerFamily, .bytelevelBPE)
+            XCTAssertEqual(adapter.descriptor.promptSystemPolicy, .ownTurn)
         }
     }
 

@@ -8,9 +8,27 @@ struct ANEMLLModelAdapter: LambdaDeckModelAdapter {
         let inventory = try LambdaDeckRuntimeInspector.inspect(modelPath: modelPath)
         self.inventory = inventory
 
-        let promptFormat: LambdaDeckPromptFormat = inventory.architecture == "gemma3" ? .gemma3Turns : .auto
-        let tokenizerFamily: LambdaDeckTokenizerFamily = inventory.architecture == "gemma3" ? .gemmaBPE : .unknown
-        let promptSystemPolicy: LambdaDeckPromptSystemPolicy? = promptFormat == .gemma3Turns ? .prefixFirstUser : nil
+        let architecture = inventory.architecture?.lowercased() ?? ""
+        let isGemma3 = architecture == "gemma3"
+        let isQwen = architecture.hasPrefix("qwen")
+
+        let promptFormat: LambdaDeckPromptFormat
+        let tokenizerFamily: LambdaDeckTokenizerFamily
+        let promptSystemPolicy: LambdaDeckPromptSystemPolicy?
+
+        if isGemma3 {
+            promptFormat = .gemma3Turns
+            tokenizerFamily = .gemmaBPE
+            promptSystemPolicy = .prefixFirstUser
+        } else if isQwen {
+            promptFormat = .chatML
+            tokenizerFamily = .bytelevelBPE
+            promptSystemPolicy = .ownTurn
+        } else {
+            promptFormat = .auto
+            tokenizerFamily = .unknown
+            promptSystemPolicy = nil
+        }
         self.descriptor = LambdaDeckModelAdapterDescriptor(
             kind: .anemll,
             adapterID: "anemll.runtime_inspector",
