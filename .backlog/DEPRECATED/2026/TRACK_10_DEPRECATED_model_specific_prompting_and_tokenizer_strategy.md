@@ -1,7 +1,8 @@
-# TRACK 10 [DRAFT]: model_specific_prompting_and_tokenizer_strategy
+# TRACK 10 [DEPRECATED]: model_specific_prompting_and_tokenizer_strategy
 
 Note
-- Tokenizer architecture and global strategy selection live in `/.backlog/ACTIVE/2026/TRACK_11_ACTIVE_unified_tokenizer_architecture_and_prompt_strategy.md`. Keep Track 10 focused on prompting/renderers; any tokenizer-family work should be scoped and executed under Track 11.
+- Deprecated: superseded by `/.backlog/DRAFT/2026/TRACK_11_DRAFT_unified_tokenizer_architecture_and_prompt_strategy.md`.
+- This Track is retained only for history; all prompting/renderers and tokenizer strategy work should be done under Track 11.
 
 Problems (PORE)
 - P1: As a user, I receive repetitive or role-confused responses from some models, because LambdaDeck applies a generic transcript prompt format when the model expects a model-specific chat template.
@@ -53,13 +54,7 @@ Risks / decisions
 - Decision (proposed): Keep tokenizer engine rewrite out of this Track; isolate prompt strategy improvements first.
 
 Plan (execution steps)
-- [ ] Move Track 10 to ACTIVE (folder + filename + title status).
-- [ ] Define prompt strategy interfaces/types and document mapping rules (metadata-first, fallback heuristics).
-- [ ] Add failing tests for ChatML rendering and adapter-selected prompt strategy behavior.
-- [ ] Implement prompting module and runtime wiring until tests pass.
-- [ ] Extend metadata validation/docs for `prompt.format: chatml` and add coverage.
-- [ ] Run `swift test` and local smoke checks; update inventory/validations.
-- [ ] Move Track 10 to COMPLETED and capture completion notes.
+- [x] Deprecated in favor of Track 11 (all work to be executed under Track 11).
 
 Inventory
 - **Current inventory**
@@ -88,4 +83,4 @@ Artifacts
 - (To add) Real-model smoke validation notes (Nanbeige/Qwen paths).
 
 Completion notes (fill when COMPLETED/DEPRECATED)
-- Pending.
+- Deprecated: folded into Track 11 (`unified_tokenizer_architecture_and_prompt_strategy`).
