@@ -5,7 +5,8 @@ import XCTest
 final class ByteLevelBPETokenizerTests: XCTestCase {
     func testByteLevelTokenizerEncodesChatMLSegments() throws {
         try withTemporaryDirectory { directory in
-            try createByteLevelTokenizerAssets(in: directory)
+            let bytes = Array("user\nHi\n".utf8)
+            try createByteLevelTokenizerAssets(in: directory, bytes: bytes)
             let tokenizer = try ByteLevelBPETokenizer(directory: directory)
 
             let segments: [PromptSegment] = [
@@ -15,8 +16,27 @@ final class ByteLevelBPETokenizerTests: XCTestCase {
             ]
 
             let tokenIDs = try tokenizer.encode(segments: segments)
+            let startID = tokenizer.tokenID(for: "<|im_start|>")
+            let endID = tokenizer.tokenID(for: "<|im_end|>")
 
-            XCTAssertEqual(tokenIDs, [1, 4, 5, 6, 7, 8, 9, 10, 2, 8])
+            XCTAssertEqual(tokenIDs.first, startID)
+            XCTAssertTrue(tokenIDs.contains(endID ?? -1))
+
+            let decoded = tokenizer.decode(tokenIDs: tokenIDs, skipSpecialTokens: true)
+            XCTAssertEqual(decoded, "user\nHi\n")
+        }
+    }
+
+    func testByteLevelTokenizerEncodesAndDecodesUTF8() throws {
+        try withTemporaryDirectory { directory in
+            let bytes = Array("f\u{00FC}nf".utf8)
+            try createByteLevelTokenizerAssets(in: directory, bytes: bytes)
+            let tokenizer = try ByteLevelBPETokenizer(directory: directory)
+
+            let tokenIDs = tokenizer.encode("f\u{00FC}nf")
+            let decoded = tokenizer.decode(tokenIDs: tokenIDs, skipSpecialTokens: true)
+
+            XCTAssertEqual(decoded, "f\u{00FC}nf")
         }
     }
 
@@ -30,27 +50,30 @@ final class ByteLevelBPETokenizerTests: XCTestCase {
         try operation(directory)
     }
 
-    private func createByteLevelTokenizerAssets(in root: URL) throws {
-        let tokenizerJSON = """
-        {
-          "model": {
-            "vocab": {
-              "<unk>": 0,
-              "<|im_start|>": 1,
-              "<|im_end|>": 2,
-              "<|endoftext|>": 3,
-              "u": 4,
-              "s": 5,
-              "e": 6,
-              "r": 7,
-              "\\n": 8,
-              "H": 9,
-              "i": 10
-            },
-            "merges": []
-          }
+    private func createByteLevelTokenizerAssets(in root: URL, bytes: [UInt8]) throws {
+        var vocab: [String: Int] = [
+            "<unk>": 0,
+            "<|im_start|>": 1,
+            "<|im_end|>": 2,
+            "<|endoftext|>": 3
+        ]
+        var nextID = 4
+        for byte in Set(bytes) {
+            let scalar = ByteLevelBPETokenizer.byteEncodedScalar(for: byte)
+            let token = String(scalar)
+            if vocab[token] == nil {
+                vocab[token] = nextID
+                nextID += 1
+            }
         }
-        """
+
+        let payload: [String: Any] = [
+            "model": [
+                "vocab": vocab,
+                "merges": []
+            ]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         let tokenizerConfig = """
         {
           "bos_token": "<|endoftext|>",
@@ -59,11 +82,7 @@ final class ByteLevelBPETokenizerTests: XCTestCase {
         }
         """
 
-        try tokenizerJSON.write(
-            to: root.appendingPathComponent("tokenizer.json"),
-            atomically: true,
-            encoding: .utf8
-        )
+        try data.write(to: root.appendingPathComponent("tokenizer.json"))
         try tokenizerConfig.write(
             to: root.appendingPathComponent("tokenizer_config.json"),
             atomically: true,

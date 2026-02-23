@@ -64,6 +64,35 @@ final class ByteLevelBPETokenizer: @unchecked Sendable {
     let eosTokenID: Int?
     let vocabularySize: Int
 
+    private static let byteMaps: (encoder: [UInt8: UnicodeScalar], decoder: [UnicodeScalar: UInt8]) = {
+        let ranges: [ClosedRange<UInt8>] = [33...126, 161...172, 174...255]
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(188)
+        for range in ranges {
+            bytes.append(contentsOf: range)
+        }
+        var used = Set(bytes)
+        var encoder: [UInt8: UnicodeScalar] = [:]
+        var decoder: [UnicodeScalar: UInt8] = [:]
+        for byte in bytes {
+            let scalar = UnicodeScalar(Int(byte))!
+            encoder[byte] = scalar
+            decoder[scalar] = byte
+        }
+        var nextScalar = 256
+        for byte in UInt8.min...UInt8.max where !used.contains(byte) {
+            let scalar = UnicodeScalar(nextScalar)!
+            encoder[byte] = scalar
+            decoder[scalar] = byte
+            nextScalar += 1
+        }
+        return (encoder, decoder)
+    }()
+
+    static func byteEncodedScalar(for byte: UInt8) -> UnicodeScalar {
+        Self.byteMaps.encoder[byte] ?? UnicodeScalar(Int(byte))!
+    }
+
     init(directory: URL) throws {
         let tokenizerURL = directory.appendingPathComponent("tokenizer.json")
         let configURL = directory.appendingPathComponent("tokenizer_config.json")
@@ -161,20 +190,36 @@ final class ByteLevelBPETokenizer: @unchecked Sendable {
             guard let token = self.tokenByID[tokenID] else {
                 continue
             }
-            if skipSpecialTokens && self.explicitSpecialTokenIDs.contains(tokenID) {
+            let isSpecial = self.explicitSpecialTokenIDs.contains(tokenID)
+            if isSpecial {
+                if skipSpecialTokens {
+                    flushBytes()
+                    continue
+                }
                 flushBytes()
+                text.append(token)
                 continue
             }
             if let byte = Self.parseByteToken(token) {
                 byteBuffer.append(byte)
                 continue
             }
-            if token.count == 1, let scalar = token.unicodeScalars.first, scalar.value <= 0xFF {
-                byteBuffer.append(UInt8(scalar.value))
-                continue
+
+            var appendedAny = false
+            for scalar in token.unicodeScalars {
+                if let byte = Self.byteMaps.decoder[scalar] {
+                    byteBuffer.append(byte)
+                    appendedAny = true
+                } else {
+                    flushBytes()
+                    text.append(String(scalar))
+                }
             }
-            flushBytes()
-            text.append(token)
+
+            if !appendedAny {
+                flushBytes()
+                text.append(token)
+            }
         }
 
         flushBytes()
@@ -204,14 +249,8 @@ final class ByteLevelBPETokenizer: @unchecked Sendable {
         var tokens: [String] = []
         tokens.reserveCapacity(text.utf8.count)
         for byte in text.utf8 {
-            if let scalar = UnicodeScalar(Int(byte)) {
-                let char = String(scalar)
-                if self.vocab[char] != nil {
-                    tokens.append(char)
-                    continue
-                }
-            }
-            tokens.append(Self.byteFallbackToken(byte))
+            let scalar = Self.byteMaps.encoder[byte] ?? UnicodeScalar(Int(byte))!
+            tokens.append(String(scalar))
         }
         return tokens
     }
@@ -247,10 +286,6 @@ final class ByteLevelBPETokenizer: @unchecked Sendable {
 
         self.bpeCache[cacheKey] = word
         return word
-    }
-
-    private static func byteFallbackToken(_ byte: UInt8) -> String {
-        String(format: "<0x%02X>", byte)
     }
 
     private static func parseByteToken(_ token: String) -> UInt8? {

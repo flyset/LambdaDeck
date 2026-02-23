@@ -125,7 +125,15 @@ Inventory
     - `docs/TROUBLESHOOTING.md`
 
   - **Validations run**
-    - `swift test` (pass; 55 tests, 0 failures, 1 skipped local-only real-model test).
+    - `swift test` (pass; 56 tests, 0 failures, 1 skipped local-only real-model test).
+    - Gemma smoke check (runtime @ `http://127.0.0.1:8080`):
+      - `GET /v1/models` -> model id `anemll-google-gemma-3-4b-it-qat-int4-unquantized-ctx4096_0.3.5`.
+      - `GET /readyz` -> `status=ready`.
+      - `POST /v1/chat/completions` -> 200 OK; response content non-empty (finish_reason `length`).
+    - Qwen smoke check (runtime @ `http://127.0.0.1:8080`):
+      - `GET /v1/models` -> model id `anemll-Qwen3-4B-ctx1024_0.3.0`.
+      - `GET /readyz` -> `status=ready`.
+      - `POST /v1/chat/completions` -> 200 OK; response content readable (finish_reason `stop`).
 
 Artifacts
 - (To add) Conformance fixtures and golden encode/decode/prompt outputs.
