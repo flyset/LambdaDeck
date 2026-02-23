@@ -5,12 +5,6 @@ public enum LambdaDeckModelAdapterKind: String, Equatable, Sendable {
     case lambdaDeckMetadata
 }
 
-public enum LambdaDeckPromptFormat: String, Equatable, Sendable {
-    case auto
-    case chatTranscript = "chat_transcript"
-    case gemma3Turns = "gemma3_turns"
-}
-
 public struct LambdaDeckAdapterExecutionPlan: Equatable, Sendable {
     public let prefillMode: String
     public let decodeMode: String
@@ -28,7 +22,10 @@ public struct LambdaDeckModelAdapterDescriptor: Equatable, Sendable {
     public let adapterID: String
     public let modelID: String
     public let tokenizerDirectory: String
+    public let tokenizerFamily: LambdaDeckTokenizerFamily
     public let promptFormat: LambdaDeckPromptFormat
+    public let promptSystemPolicy: LambdaDeckPromptSystemPolicy?
+    public let warnings: [String]
     public let executionPlan: LambdaDeckAdapterExecutionPlan
 
     public init(
@@ -36,14 +33,20 @@ public struct LambdaDeckModelAdapterDescriptor: Equatable, Sendable {
         adapterID: String,
         modelID: String,
         tokenizerDirectory: String,
+        tokenizerFamily: LambdaDeckTokenizerFamily,
         promptFormat: LambdaDeckPromptFormat,
+        promptSystemPolicy: LambdaDeckPromptSystemPolicy?,
+        warnings: [String] = [],
         executionPlan: LambdaDeckAdapterExecutionPlan
     ) {
         self.kind = kind
         self.adapterID = adapterID
         self.modelID = modelID
         self.tokenizerDirectory = tokenizerDirectory
+        self.tokenizerFamily = tokenizerFamily
         self.promptFormat = promptFormat
+        self.promptSystemPolicy = promptSystemPolicy
+        self.warnings = warnings
         self.executionPlan = executionPlan
     }
 }

@@ -22,6 +22,17 @@ struct LambdaDeckMain {
                         )
                     )
 
+                    if let diagnostics = configuration.runtimeDiagnostics {
+                        writeStandardErrorLine(
+                            LambdaDeckStartupLogs.runtimeStrategy(selection: diagnostics.selection)
+                        )
+                        for warning in diagnostics.warnings {
+                            writeStandardErrorLine(
+                                LambdaDeckStartupLogs.metadataWarning(warning)
+                            )
+                        }
+                    }
+
                     if let runtimeProvider = configuration.inferenceRuntimeProvider {
                         writeStandardErrorLine(LambdaDeckStartupLogs.runtimeWarmupStarted())
                         Task.detached(priority: .utility) {
@@ -96,6 +107,18 @@ enum LambdaDeckStartupLogs {
 
     static func runtimeWarmupStarted() -> String {
         "startup: runtime warmup started"
+    }
+
+    static func runtimeStrategy(selection: LambdaDeckStrategySelection) -> String {
+        "startup: runtime strategy tokenizer=\(selection.tokenizerFamily.rawValue) "
+            + "prompt=\(selection.promptFormat.rawValue) "
+            + "system_policy=\(selection.promptSystemPolicy.rawValue) "
+            + "fallback=\(selection.usedFallback)"
+    }
+
+    static func metadataWarning(_ warning: String) -> String {
+        let sanitized = warning.replacingOccurrences(of: "\n", with: " ")
+        return "startup: metadata warning (\(sanitized))"
     }
 
     static func runtimeReady(elapsedMilliseconds: Int) -> String {

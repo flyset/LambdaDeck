@@ -1,4 +1,4 @@
-# TRACK 11 [DRAFT]: unified_tokenizer_architecture_and_prompt_strategy
+# TRACK 11 [ACTIVE]: unified_tokenizer_architecture_and_prompt_strategy
 
 Note
 - Track 10 is deprecated and folded into this Track: `/.backlog/DEPRECATED/2026/TRACK_10_DEPRECATED_model_specific_prompting_and_tokenizer_strategy.md`.
@@ -40,6 +40,7 @@ Non-negotiables
 - Follow TDD/test-first for tokenizer, prompting, adapter, and diagnostics changes.
 - Keep OpenAI-compatible endpoint behavior stable while improving internal strategy correctness.
 - Keep tests co-located with the affected Swift modules/packages per repo conventions.
+- Preserve Track 9 reorg principle: avoid monolithic files; keep strategies and tokenizers in responsibility-based subdirectories with one primary responsibility per file.
 
 Milestones
 - [ ] Milestone 1: Define tokenizer + prompt strategy contracts and adapter/metadata ownership boundaries.
@@ -65,11 +66,11 @@ Risks / decisions
 - Open: System message handling policy for any future non-ChatML formats (if added).
 
 Plan (execution steps)
-- [ ] Move Track 11 to ACTIVE (folder + filename + title status).
-- [ ] Define tokenizer and prompt strategy interfaces/types, selection rules, and metadata/adapter mapping.
-- [ ] Add failing tests for tokenizer-family conformance and prompt rendering by strategy.
-- [ ] Implement tokenizer abstractions and runtime wiring until tests pass.
-- [ ] Implement diagnostics improvements (root-cause warmup errors + active strategy visibility).
+- [x] Move Track 11 to ACTIVE (folder + filename + title status).
+- [x] Define tokenizer and prompt strategy interfaces/types, selection rules, and metadata/adapter mapping.
+- [x] Add failing tests for tokenizer-family conformance and prompt rendering by strategy.
+- [x] Implement tokenizer abstractions and runtime wiring until tests pass.
+- [x] Implement diagnostics improvements (root-cause warmup errors + active strategy visibility).
 - [ ] Update docs (`ARCHITECTURE.md`, `docs/BUNDLE_METADATA.md`, `docs/DEVELOPMENT.md`, `docs/TROUBLESHOOTING.md`) and run validations.
 - [ ] Move Track 11 to COMPLETED and capture completion notes.
 
@@ -77,6 +78,19 @@ Inventory
 - **Current inventory**
   - Tokenizers:
     - `Sources/LambdaDeckCore/Tokenizers/GemmaBPETokenizer.swift`
+    - `Sources/LambdaDeckCore/Tokenizers/GemmaBPETokenizer+Tokenizer.swift`
+    - `Sources/LambdaDeckCore/Tokenizers/ByteLevelBPETokenizer.swift`
+    - `Sources/LambdaDeckCore/Tokenizers/ByteLevelBPETokenizer+Tokenizer.swift`
+    - `Sources/LambdaDeckCore/Tokenizers/TokenizerTypes.swift`
+    - `Sources/LambdaDeckCore/Tokenizers/TokenizerFactory.swift`
+  - Prompting:
+    - `Sources/LambdaDeckCore/Prompting/PromptingTypes.swift`
+    - `Sources/LambdaDeckCore/Prompting/PromptStrategyFactory.swift`
+    - `Sources/LambdaDeckCore/Prompting/StopStrategyFactory.swift`
+    - `Sources/LambdaDeckCore/Prompting/Strategies/Gemma3PromptStrategy.swift`
+    - `Sources/LambdaDeckCore/Prompting/Strategies/ChatMLPromptStrategy.swift`
+    - `Sources/LambdaDeckCore/Prompting/Strategies/ChatTranscriptPromptStrategy.swift`
+    - `Sources/LambdaDeckCore/Prompting/StopStrategies/StopTokenStrategy.swift`
   - Runtime prompt/token flow and warmup:
     - `Sources/LambdaDeckCore/Runtime/CoreMLRuntime.swift`
     - `Sources/LambdaDeckCore/Runtime/InferenceRuntime.swift`
@@ -84,17 +98,24 @@ Inventory
   - Adapter contracts and selection:
     - `Sources/LambdaDeckCore/Adapters/Contracts/ModelAdapterTypes.swift`
     - `Sources/LambdaDeckCore/Adapters/Resolver/ModelAdapterResolver.swift`
+    - `Sources/LambdaDeckCore/Adapters/Resolver/StrategySelection.swift`
     - `Sources/LambdaDeckCore/Adapters/ANEMLL/ANEMLLModelAdapter.swift`
     - `Sources/LambdaDeckCore/Adapters/LambdaDeckMetadata/LambdaDeckMetadataModelAdapter.swift`
   - Bundle metadata contracts and validation:
     - `Sources/LambdaDeckCore/Bundles/Contracts/BundleMetadataTypes.swift`
+    - `Sources/LambdaDeckCore/Bundles/Schema/RawBundleMetadataV1.swift`
     - `Sources/LambdaDeckCore/Bundles/Validation/BundleMetadataValidator.swift`
     - `Sources/LambdaDeckCore/Bundles/Loader/BundleMetadataLoader.swift`
   - Server/operator readiness surfaces:
     - `Sources/LambdaDeckCore/Server/LambdaDeckServer.swift`
+    - `Sources/LambdaDeckCore/Server/RuntimeDiagnostics.swift`
     - `Sources/LambdaDeckCLI/LambdaDeckMain.swift`
   - Tests:
     - `Tests/LambdaDeckCoreTests/LambdaDeckCoreTests.swift`
+    - `Tests/LambdaDeckCoreTests/Prompting/PromptStrategyConformanceTests.swift`
+    - `Tests/LambdaDeckCoreTests/Prompting/StopStrategyTests.swift`
+    - `Tests/LambdaDeckCoreTests/Tokenizers/GemmaTokenizerConformanceTests.swift`
+    - `Tests/LambdaDeckCoreTests/Tokenizers/ByteLevelBPETokenizerTests.swift`
     - `Tests/LambdaDeckIntegrationTests/OpenAIContractIntegrationTests.swift`
     - `Tests/LambdaDeckCLITests/LambdaDeckCLITests.swift`
   - Documentation:
@@ -102,6 +123,9 @@ Inventory
     - `docs/BUNDLE_METADATA.md`
     - `docs/DEVELOPMENT.md`
     - `docs/TROUBLESHOOTING.md`
+
+  - **Validations run**
+    - `swift test` (pass; 55 tests, 0 failures, 1 skipped local-only real-model test).
 
 Artifacts
 - (To add) Conformance fixtures and golden encode/decode/prompt outputs.

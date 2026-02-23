@@ -385,7 +385,7 @@ final class LambdaDeckCoreTests: XCTestCase {
         }
     }
 
-    func testLambdaDeckMetadataValidationErrorsWhenPromptFormatUnsupported() throws {
+    func testLambdaDeckMetadataValidationWarnsWhenPromptFormatUnsupported() throws {
         try withTemporaryDirectory { directory in
             let bundle = directory.appendingPathComponent("metadata-prompt")
             try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
@@ -397,11 +397,12 @@ final class LambdaDeckCoreTests: XCTestCase {
                 in: bundle
             )
 
-            XCTAssertThrowsError(
-                try LambdaDeckBundleMetadataLoader.loadResolved(fromBundlePath: bundle.path)
-            ) { error in
-                XCTAssertEqual(error as? LambdaDeckBundleMetadataError, .unsupportedPromptFormat("qwen3_chatml"))
-            }
+            let metadata = try LambdaDeckBundleMetadataLoader.loadResolved(fromBundlePath: bundle.path)
+
+            XCTAssertNil(metadata.promptFormat)
+            XCTAssertTrue(
+                metadata.warnings.contains("Unsupported prompt.format 'qwen3_chatml'; falling back to adapter defaults.")
+            )
         }
     }
 

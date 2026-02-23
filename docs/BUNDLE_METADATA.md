@@ -37,6 +37,9 @@ This spec is used for model discovery, adapter selection, and operator-facing va
 - `tokenizer.directory` (`String`, required)
   - Relative or absolute path to tokenizer assets.
   - Must contain both `tokenizer.json` and `tokenizer_config.json`.
+- `tokenizer.family` (`String`, optional)
+  - Supported values (v1): `gemma_bpe`, `bytelevel_bpe`, `unknown`.
+  - When omitted or unsupported, LambdaDeck falls back to adapter defaults.
 - `adapter.kind` (`String`, required)
   - Supported values (v1): `coreml.monolithic`.
 - `runtime.monolithic_model` (`String`, required for `coreml.monolithic`)
@@ -47,8 +50,15 @@ This spec is used for model discovery, adapter selection, and operator-facing va
 - `runtime.batch_size` (`Int`, optional)
 - `runtime.architecture` (`String`, optional)
 - `prompt.format` (`String`, optional)
-  - Supported values: `chat_transcript`, `gemma3_turns`.
-  - Defaults to `chat_transcript` when omitted.
+  - Supported values (v1): `chat_transcript`, `gemma3_turns`, `chatml`.
+  - When omitted or unsupported, LambdaDeck falls back to adapter defaults.
+  - `chat_transcript` uses default stop strings (`\nuser:`, `\nassistant:`, `\nsystem:`) merged with any request `stop` values.
+- `prompt.system_policy` (`String`, optional)
+  - Supported values (v1): `prefix_first_user`, `own_turn`.
+  - Defaults are format-specific:
+    - `gemma3_turns` -> `prefix_first_user`
+    - `chatml` -> `own_turn`
+    - `chat_transcript` -> `own_turn`
 
 ## Validation behavior
 
@@ -61,7 +71,17 @@ LambdaDeck returns explicit errors for common operator issues, including:
 - unsupported `adapter.kind`,
 - missing tokenizer assets,
 - missing referenced model path,
-- unsupported `prompt.format`.
+
+LambdaDeck emits warnings (not hard errors) for:
+- unsupported `prompt.format`,
+- unsupported `tokenizer.family`,
+- unsupported `prompt.system_policy`.
+
+Warnings are surfaced at startup as:
+
+```text
+startup: metadata warning (<message>)
+```
 
 ## Adapter selection precedence
 

@@ -5,6 +5,7 @@ struct RawBundleMetadataV1: Decodable {
 
     struct RawTokenizer: Decodable {
         let directory: String
+        let family: String?
     }
 
     struct RawAdapter: Decodable {
@@ -28,7 +29,13 @@ struct RawBundleMetadataV1: Decodable {
     }
 
     struct RawPrompt: Decodable {
-        let format: String
+        let format: String?
+        let systemPolicy: String?
+
+        enum CodingKeys: String, CodingKey {
+            case format
+            case systemPolicy = "system_policy"
+        }
     }
 
     let schemaVersion: Int

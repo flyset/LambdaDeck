@@ -18,7 +18,7 @@ LambdaDeck is a Swift-native, OpenAI-compatible HTTP server for on-device Core M
   - Files: `OpenAIContracts.swift`, `StubContract.swift`.
 - `Server/`
   - HTTP routing and endpoint orchestration.
-  - File: `LambdaDeckServer.swift`.
+  - Files: `LambdaDeckServer.swift`, `RuntimeDiagnostics.swift`.
 - `Discovery/`
   - Model path resolution from CLI flags, env, and default roots.
   - File: `ModelResolution.swift`.
@@ -31,9 +31,12 @@ LambdaDeck is a Swift-native, OpenAI-compatible HTTP server for on-device Core M
 - `Bundles/`
   - Metadata contracts, loader, schema decode, validation, and path resolution.
   - Files: `Contracts/BundleMetadataTypes.swift`, `Loader/BundleMetadataLoader.swift`, `Schema/RawBundleMetadataV1.swift`, `Validation/BundleMetadataValidator.swift`, `Errors/BundleMetadataError.swift`, `Internal/BundlePathResolver.swift`.
+- `Prompting/`
+  - Prompt strategy selection and rendering.
+  - Files: `PromptingTypes.swift`, `PromptStrategyFactory.swift`, `StopStrategyFactory.swift`, `Strategies/*`, `StopStrategies/*`.
 - `Tokenizers/`
   - Tokenizer implementations used by runtime code.
-  - File: `GemmaBPETokenizer.swift`.
+  - Files: `GemmaBPETokenizer.swift`, `GemmaBPETokenizer+Tokenizer.swift`, `ByteLevelBPETokenizer.swift`, `ByteLevelBPETokenizer+Tokenizer.swift`, `TokenizerTypes.swift`, `TokenizerFactory.swift`.
 - `Version/`
   - Package version constants.
   - File: `LambdaDeckVersion.swift`.
@@ -44,7 +47,7 @@ This organization is intentionally mechanical: it improves ownership boundaries 
 
 1. CLI parses command options into `LambdaDeckServeOptions`.
 2. `LambdaDeckModelResolver` selects a model source (`--model-path`, env path, discovered root, or stub).
-3. `LambdaDeckServerBootstrap` resolves a model adapter (metadata-first, then ANEMLL fallback), sets effective model identity, and initializes `LambdaDeckRuntimeProvider` for background warmup in non-stub mode.
+3. `LambdaDeckServerBootstrap` resolves a model adapter (metadata-first, then ANEMLL fallback), computes strategy selection (tokenizer + prompt), captures metadata warnings, sets effective model identity, and initializes `LambdaDeckRuntimeProvider` for background warmup in non-stub mode.
 4. `LambdaDeckServer` exposes:
    - `GET /v1/models`
    - `GET /readyz`

@@ -1,7 +1,7 @@
 # TRACK 10 [DEPRECATED]: model_specific_prompting_and_tokenizer_strategy
 
 Note
-- Deprecated: superseded by `/.backlog/DRAFT/2026/TRACK_11_DRAFT_unified_tokenizer_architecture_and_prompt_strategy.md`.
+- Deprecated: superseded by `/.backlog/ACTIVE/2026/TRACK_11_ACTIVE_unified_tokenizer_architecture_and_prompt_strategy.md`.
 - This Track is retained only for history; all prompting/renderers and tokenizer strategy work should be done under Track 11.
 
 Problems (PORE)

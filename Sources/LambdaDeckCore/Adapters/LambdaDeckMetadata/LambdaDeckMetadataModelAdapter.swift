@@ -30,6 +30,10 @@ struct LambdaDeckMetadataModelAdapter: LambdaDeckModelAdapter {
             .chatTranscript
         case .gemma3Turns:
             .gemma3Turns
+        case .chatML:
+            .chatML
+        case .none:
+            .auto
         }
 
         self.descriptor = LambdaDeckModelAdapterDescriptor(
@@ -37,7 +41,10 @@ struct LambdaDeckMetadataModelAdapter: LambdaDeckModelAdapter {
             adapterID: "lambdadeck.bundle.v1",
             modelID: metadata.modelID,
             tokenizerDirectory: metadata.tokenizerDirectory.path,
+            tokenizerFamily: metadata.tokenizerFamily ?? .unknown,
             promptFormat: promptFormat,
+            promptSystemPolicy: metadata.promptSystemPolicy,
+            warnings: metadata.warnings,
             executionPlan: LambdaDeckAdapterExecutionPlan(
                 prefillMode: "single_step_prefill",
                 decodeMode: "token_by_token",
@@ -47,6 +54,9 @@ struct LambdaDeckMetadataModelAdapter: LambdaDeckModelAdapter {
     }
 
     func makeRuntime() throws -> any LambdaDeckInferenceRuntime {
-        try makeRuntimeFromInventory(self.inventory)
+        try makeRuntimeFromInventory(
+            self.inventory,
+            descriptor: self.descriptor
+        )
     }
 }

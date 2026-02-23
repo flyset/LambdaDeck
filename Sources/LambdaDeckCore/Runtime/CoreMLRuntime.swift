@@ -14,62 +14,6 @@ private struct ChunkPrefillModels {
 }
 
 @available(macOS 15.0, *)
-private enum RuntimePromptRenderer {
-    static func render(messages: [OpenAIChatMessage], tokenizer: GemmaBPETokenizer) throws -> String {
-        if tokenizer.tokenID(for: "<start_of_turn>") != nil, tokenizer.tokenID(for: "<end_of_turn>") != nil {
-            return try Gemma3PromptRenderer.render(messages: messages)
-        }
-
-        let transcript = messages
-            .map { "\($0.role): \($0.content)" }
-            .joined(separator: "\n")
-        return transcript + "\nassistant:"
-    }
-}
-
-@available(macOS 15.0, *)
-private enum Gemma3PromptRenderer {
-    static func render(messages: [OpenAIChatMessage]) throws -> String {
-        guard !messages.isEmpty else {
-            throw LambdaDeckRuntimeError.invalidRequest("messages must contain at least one message")
-        }
-
-        var prompt = "<bos>"
-        var loopMessages = messages
-        var firstUserPrefix = ""
-
-        if messages[0].role == "system" {
-            firstUserPrefix = messages[0].content.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n"
-            loopMessages = Array(messages.dropFirst())
-        }
-
-        guard !loopMessages.isEmpty else {
-            throw LambdaDeckRuntimeError.invalidRequest("at least one user message is required")
-        }
-
-        for (index, message) in loopMessages.enumerated() {
-            let expectedRole = index % 2 == 0 ? "user" : "assistant"
-            guard message.role == expectedRole else {
-                throw LambdaDeckRuntimeError.invalidRequest(
-                    "Conversation roles must alternate user/assistant/user/assistant... for Gemma models"
-                )
-            }
-
-            let role = message.role == "assistant" ? "model" : "user"
-            prompt += "<start_of_turn>\(role)\n"
-            if index == 0, !firstUserPrefix.isEmpty {
-                prompt += firstUserPrefix
-            }
-            prompt += message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            prompt += "<end_of_turn>\n"
-        }
-
-        prompt += "<start_of_turn>model\n"
-        return prompt
-    }
-}
-
-@available(macOS 15.0, *)
 private enum RuntimeGenerationHelpers {
     static func validateRequest(_ request: OpenAIChatCompletionsRequest) throws {
         if let n = request.n, n != 1 {
@@ -78,16 +22,6 @@ private enum RuntimeGenerationHelpers {
         if let maxTokens = request.maxTokens, maxTokens <= 0 {
             throw LambdaDeckRuntimeError.invalidRequest("max_tokens must be greater than zero")
         }
-    }
-
-    static func stopTokenIDs(tokenizer: GemmaBPETokenizer) -> Set<Int> {
-        let candidates = [
-            tokenizer.eosTokenID,
-            tokenizer.tokenID(for: "<end_of_turn>"),
-            tokenizer.tokenID(for: "<|eot_id|>"),
-            tokenizer.tokenID(for: "<|endoftext|>")
-        ]
-        return Set(candidates.compactMap { $0 })
     }
 
     static func stopStrings(from stop: OpenAIStop?) -> [String] {
@@ -99,6 +33,17 @@ private enum RuntimeGenerationHelpers {
         case .multiple(let values):
             return values.filter { !$0.isEmpty }
         }
+    }
+
+    static func mergeStopStrings(base: [String], extra: [String]) -> [String] {
+        guard !extra.isEmpty else {
+            return base
+        }
+        var combined = base
+        for stop in extra where !combined.contains(stop) {
+            combined.append(stop)
+        }
+        return combined
     }
 
     static func maxNewTokens(
@@ -428,7 +373,9 @@ private enum RuntimeInputBuilders {
 
 @available(macOS 15.0, *)
 actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
-    private let tokenizer: GemmaBPETokenizer
+    private let tokenizer: any Tokenizer
+    private let promptStrategy: PromptStrategy
+    private let stopStrategy: StopStrategy
     private let embeddingsModel: MLModel
     private let lmHeadModel: MLModel
     private let chunkModels: [ChunkInferModels]
@@ -443,7 +390,12 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
         self.prefillBatchSize > 1
     }
 
-    init(inventory: LambdaDeckRuntimeInventory) throws {
+    init(
+        inventory: LambdaDeckRuntimeInventory,
+        tokenizer: any Tokenizer,
+        promptStrategy: PromptStrategy,
+        stopStrategy: StopStrategy
+    ) throws {
         guard inventory.adapterKind == .gemma3Chunked,
               let embeddingsPath = inventory.embeddingsPath,
               let lmHeadPath = inventory.lmHeadPath,
@@ -458,7 +410,9 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
         self.prefillChunkPaths = inventory.ffnChunkPaths
         self.prefillModels = nil
         self.prefillUnavailable = self.prefillBatchSize <= 1
-        self.tokenizer = try GemmaBPETokenizer(directory: inventory.tokenizerDirectory)
+        self.tokenizer = tokenizer
+        self.promptStrategy = promptStrategy
+        self.stopStrategy = stopStrategy
 
         self.embeddingsModel = try Self.loadModel(url: embeddingsPath, functionName: nil)
         self.lmHeadModel = try Self.loadModel(url: lmHeadPath, functionName: nil)
@@ -546,8 +500,8 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
     ) async throws -> LambdaDeckRuntimeCompletion {
         try RuntimeGenerationHelpers.validateRequest(request)
 
-        let prompt = try RuntimePromptRenderer.render(messages: request.messages, tokenizer: self.tokenizer)
-        var tokenIDs = self.tokenizer.encode(prompt)
+        let segments = try promptStrategy.render(messages: request.messages)
+        var tokenIDs = try self.tokenizer.encode(segments: segments)
         guard !tokenIDs.isEmpty else {
             throw LambdaDeckRuntimeError.invalidRequest("Prompt tokenization produced an empty token sequence")
         }
@@ -558,8 +512,11 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
             promptTokenCount: tokenIDs.count,
             contextLength: self.contextLength
         )
-        let stopTokenIDs = RuntimeGenerationHelpers.stopTokenIDs(tokenizer: self.tokenizer)
-        let stopStrings = RuntimeGenerationHelpers.stopStrings(from: request.stop)
+        let stopTokenIDs = stopStrategy.stopTokenIDs(tokenizer: self.tokenizer)
+        let stopStrings = RuntimeGenerationHelpers.mergeStopStrings(
+            base: RuntimeGenerationHelpers.stopStrings(from: request.stop),
+            extra: stopStrategy.stopStrings()
+        )
 
         var state = self.chunkModels[0].infer.makeState()
         var tokenStepInputs = try RuntimeInputBuilders.ReusableTokenStepInputs(contextLength: self.contextLength)
@@ -882,20 +839,29 @@ actor Gemma3CoreMLRuntime: LambdaDeckInferenceRuntime {
 
 @available(macOS 15.0, *)
 actor MonolithicCoreMLRuntime: LambdaDeckInferenceRuntime {
-    private let tokenizer: GemmaBPETokenizer
+    private let tokenizer: any Tokenizer
+    private let promptStrategy: PromptStrategy
+    private let stopStrategy: StopStrategy
     private let inferModel: MLModel
     private let inferRotateModel: MLModel?
     private let contextLength: Int
     private let slidingWindow: Int?
 
-    init(inventory: LambdaDeckRuntimeInventory) throws {
+    init(
+        inventory: LambdaDeckRuntimeInventory,
+        tokenizer: any Tokenizer,
+        promptStrategy: PromptStrategy,
+        stopStrategy: StopStrategy
+    ) throws {
         guard inventory.adapterKind == .monolithicCompiled,
               let modelPath = inventory.monolithicModelPath
         else {
             throw LambdaDeckRuntimeError.invalidModelBundle("Invalid monolithic runtime inventory")
         }
 
-        self.tokenizer = try GemmaBPETokenizer(directory: inventory.tokenizerDirectory)
+        self.tokenizer = tokenizer
+        self.promptStrategy = promptStrategy
+        self.stopStrategy = stopStrategy
         self.contextLength = inventory.contextLength
         self.slidingWindow = inventory.slidingWindow
 
@@ -935,8 +901,8 @@ actor MonolithicCoreMLRuntime: LambdaDeckInferenceRuntime {
     ) async throws -> LambdaDeckRuntimeCompletion {
         try RuntimeGenerationHelpers.validateRequest(request)
 
-        let prompt = try RuntimePromptRenderer.render(messages: request.messages, tokenizer: self.tokenizer)
-        var tokenIDs = self.tokenizer.encode(prompt)
+        let segments = try promptStrategy.render(messages: request.messages)
+        var tokenIDs = try self.tokenizer.encode(segments: segments)
         guard !tokenIDs.isEmpty else {
             throw LambdaDeckRuntimeError.invalidRequest("Prompt tokenization produced an empty token sequence")
         }
@@ -947,8 +913,11 @@ actor MonolithicCoreMLRuntime: LambdaDeckInferenceRuntime {
             promptTokenCount: tokenIDs.count,
             contextLength: self.contextLength
         )
-        let stopTokenIDs = RuntimeGenerationHelpers.stopTokenIDs(tokenizer: self.tokenizer)
-        let stopStrings = RuntimeGenerationHelpers.stopStrings(from: request.stop)
+        let stopTokenIDs = stopStrategy.stopTokenIDs(tokenizer: self.tokenizer)
+        let stopStrings = RuntimeGenerationHelpers.mergeStopStrings(
+            base: RuntimeGenerationHelpers.stopStrings(from: request.stop),
+            extra: stopStrategy.stopStrings()
+        )
 
         let state = self.inferModel.makeState()
 

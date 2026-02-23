@@ -15,14 +15,36 @@ enum LambdaDeckBundleMetadataValidator {
             throw LambdaDeckBundleMetadataError.unsupportedAdapterKind(raw.adapter.kind)
         }
 
-        let promptFormat: LambdaDeckMetadataPromptFormat
-        if let rawPromptFormat = raw.prompt?.format {
-            guard let parsedFormat = LambdaDeckMetadataPromptFormat(rawValue: rawPromptFormat) else {
-                throw LambdaDeckBundleMetadataError.unsupportedPromptFormat(rawPromptFormat)
+        var warnings: [String] = []
+
+        let promptFormat: LambdaDeckMetadataPromptFormat?
+        if let rawPromptFormat = raw.prompt?.format?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawPromptFormat.isEmpty {
+            if let parsedFormat = LambdaDeckMetadataPromptFormat(rawValue: rawPromptFormat) {
+                promptFormat = parsedFormat
+            } else {
+                warnings.append(
+                    "Unsupported prompt.format '\(rawPromptFormat)'; falling back to adapter defaults."
+                )
+                promptFormat = nil
             }
-            promptFormat = parsedFormat
         } else {
-            promptFormat = .chatTranscript
+            promptFormat = nil
+        }
+
+        let promptSystemPolicy: LambdaDeckPromptSystemPolicy?
+        if let rawPromptPolicy = raw.prompt?.systemPolicy?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawPromptPolicy.isEmpty {
+            if let parsedPolicy = LambdaDeckPromptSystemPolicy(rawValue: rawPromptPolicy) {
+                promptSystemPolicy = parsedPolicy
+            } else {
+                warnings.append(
+                    "Unsupported prompt.system_policy '\(rawPromptPolicy)'; falling back to format default."
+                )
+                promptSystemPolicy = nil
+            }
+        } else {
+            promptSystemPolicy = nil
         }
 
         let tokenizerDirectoryInput = raw.tokenizer.directory.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -30,6 +52,20 @@ enum LambdaDeckBundleMetadataValidator {
             tokenizerDirectoryInput.isEmpty ? "." : tokenizerDirectoryInput,
             relativeTo: bundleURL
         )
+        let tokenizerFamily: LambdaDeckTokenizerFamily?
+        if let rawTokenizerFamily = raw.tokenizer.family?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawTokenizerFamily.isEmpty {
+            if let parsedFamily = LambdaDeckTokenizerFamily(rawValue: rawTokenizerFamily) {
+                tokenizerFamily = parsedFamily
+            } else {
+                warnings.append(
+                    "Unsupported tokenizer.family '\(rawTokenizerFamily)'; falling back to adapter defaults."
+                )
+                tokenizerFamily = nil
+            }
+        } else {
+            tokenizerFamily = nil
+        }
         let tokenizerJSON = tokenizerDirectory.appendingPathComponent("tokenizer.json")
         let tokenizerConfig = tokenizerDirectory.appendingPathComponent("tokenizer_config.json")
         guard FileManager.default.fileExists(atPath: tokenizerJSON.path),
@@ -56,12 +92,15 @@ enum LambdaDeckBundleMetadataValidator {
             modelID: modelID,
             adapterKind: adapterKind,
             tokenizerDirectory: tokenizerDirectory,
+            tokenizerFamily: tokenizerFamily,
             monolithicModelPath: monolithicModelPath,
             contextLength: contextLength,
             slidingWindow: raw.runtime.slidingWindow,
             batchSize: raw.runtime.batchSize,
             architecture: raw.runtime.architecture,
-            promptFormat: promptFormat
+            promptFormat: promptFormat,
+            promptSystemPolicy: promptSystemPolicy,
+            warnings: warnings
         )
     }
 }

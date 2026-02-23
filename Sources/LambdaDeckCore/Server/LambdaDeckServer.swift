@@ -7,6 +7,7 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
     public let resolvedModel: LambdaDeckResolvedModel
     public let inferenceRuntime: (any LambdaDeckInferenceRuntime)?
     public let inferenceRuntimeProvider: LambdaDeckRuntimeProvider?
+    public let runtimeDiagnostics: LambdaDeckRuntimeDiagnostics?
     public let maxRequestBodyBytes: Int
     public let runtimeWarmupTimeoutNanoseconds: UInt64
     public let streamChunkDelayNanoseconds: UInt64
@@ -17,6 +18,7 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
         resolvedModel: LambdaDeckResolvedModel,
         inferenceRuntime: (any LambdaDeckInferenceRuntime)? = nil,
         inferenceRuntimeProvider: LambdaDeckRuntimeProvider? = nil,
+        runtimeDiagnostics: LambdaDeckRuntimeDiagnostics? = nil,
         maxRequestBodyBytes: Int = 2_000_000,
         runtimeWarmupTimeoutNanoseconds: UInt64 = 5_000_000_000,
         streamChunkDelayNanoseconds: UInt64 = 0
@@ -26,6 +28,7 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
         self.resolvedModel = resolvedModel
         self.inferenceRuntime = inferenceRuntime
         self.inferenceRuntimeProvider = inferenceRuntimeProvider
+        self.runtimeDiagnostics = runtimeDiagnostics
         self.maxRequestBodyBytes = maxRequestBodyBytes
         self.runtimeWarmupTimeoutNanoseconds = runtimeWarmupTimeoutNanoseconds
         self.streamChunkDelayNanoseconds = streamChunkDelayNanoseconds
@@ -37,6 +40,7 @@ public struct LambdaDeckServerConfiguration: Equatable, Sendable {
             && lhs.resolvedModel == rhs.resolvedModel
             && ((lhs.inferenceRuntime == nil) == (rhs.inferenceRuntime == nil))
             && ((lhs.inferenceRuntimeProvider == nil) == (rhs.inferenceRuntimeProvider == nil))
+            && lhs.runtimeDiagnostics == rhs.runtimeDiagnostics
             && lhs.maxRequestBodyBytes == rhs.maxRequestBodyBytes
             && lhs.runtimeWarmupTimeoutNanoseconds == rhs.runtimeWarmupTimeoutNanoseconds
             && lhs.streamChunkDelayNanoseconds == rhs.streamChunkDelayNanoseconds
@@ -56,10 +60,16 @@ public enum LambdaDeckServerBootstrap {
         )
 
         let resolvedModel: LambdaDeckResolvedModel
+        let runtimeDiagnostics: LambdaDeckRuntimeDiagnostics?
         if let modelPath = initialResolvedModel.modelPath {
             let adapter = try LambdaDeckModelAdapterResolver.resolve(
                 modelPath: modelPath,
                 fallbackModelID: initialResolvedModel.modelID
+            )
+            let selection = LambdaDeckStrategySelector.resolve(from: adapter.descriptor)
+            runtimeDiagnostics = LambdaDeckRuntimeDiagnostics(
+                selection: selection,
+                warnings: adapter.descriptor.warnings
             )
             resolvedModel = LambdaDeckResolvedModel(
                 modelID: adapter.descriptor.modelID,
@@ -67,6 +77,7 @@ public enum LambdaDeckServerBootstrap {
                 source: initialResolvedModel.source
             )
         } else {
+            runtimeDiagnostics = nil
             resolvedModel = initialResolvedModel
         }
 
@@ -77,7 +88,8 @@ public enum LambdaDeckServerBootstrap {
             host: options.host,
             port: options.port,
             resolvedModel: resolvedModel,
-            inferenceRuntimeProvider: inferenceRuntimeProvider
+            inferenceRuntimeProvider: inferenceRuntimeProvider,
+            runtimeDiagnostics: runtimeDiagnostics
         )
     }
 }

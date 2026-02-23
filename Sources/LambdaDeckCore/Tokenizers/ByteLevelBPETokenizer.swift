@@ -1,16 +1,18 @@
 import Foundation
 
-struct GemmaTokenizerConfig: Decodable {
+private struct ByteLevelTokenizerConfig: Decodable {
     let bosToken: String?
     let eosToken: String?
+    let unkToken: String?
 
     enum CodingKeys: String, CodingKey {
         case bosToken = "bos_token"
         case eosToken = "eos_token"
+        case unkToken = "unk_token"
     }
 }
 
-private struct GemmaTokenizerJSON: Decodable {
+private struct ByteLevelTokenizerJSON: Decodable {
     struct MergePair: Decodable {
         let first: String
         let second: String
@@ -49,7 +51,7 @@ private struct GemmaTokenizerJSON: Decodable {
     let model: Model
 }
 
-final class GemmaBPETokenizer: @unchecked Sendable {
+final class ByteLevelBPETokenizer: @unchecked Sendable {
     private let vocab: [String: Int]
     private let tokenByID: [Int: String]
     private let mergeRanks: [String: Int]
@@ -67,13 +69,13 @@ final class GemmaBPETokenizer: @unchecked Sendable {
         let configURL = directory.appendingPathComponent("tokenizer_config.json")
 
         let tokenizerData = try Data(contentsOf: tokenizerURL)
-        let rawTokenizer = try JSONDecoder().decode(GemmaTokenizerJSON.self, from: tokenizerData)
+        let rawTokenizer = try JSONDecoder().decode(ByteLevelTokenizerJSON.self, from: tokenizerData)
         let configData = try Data(contentsOf: configURL)
-        let config = try JSONDecoder().decode(GemmaTokenizerConfig.self, from: configData)
+        let config = try JSONDecoder().decode(ByteLevelTokenizerConfig.self, from: configData)
 
         self.vocab = rawTokenizer.model.vocab
         self.tokenByID = Dictionary(uniqueKeysWithValues: rawTokenizer.model.vocab.map { ($1, $0) })
-        self.unknownTokenID = rawTokenizer.model.vocab["<unk>"] ?? 0
+        self.unknownTokenID = rawTokenizer.model.vocab[config.unkToken ?? "<unk>"] ?? 0
         self.bosTokenID = config.bosToken.flatMap { rawTokenizer.model.vocab[$0] }
         self.eosTokenID = config.eosToken.flatMap { rawTokenizer.model.vocab[$0] }
         self.vocabularySize = (rawTokenizer.model.vocab.values.max() ?? -1) + 1
@@ -90,12 +92,12 @@ final class GemmaBPETokenizer: @unchecked Sendable {
             "<eos>",
             "<bos>",
             "<unk>",
-            "<start_of_turn>",
-            "<end_of_turn>",
-            "<start_of_image>",
-            "<image_soft_token>",
+            "<|im_start|>",
+            "<|im_end|>",
             "<|endoftext|>",
-            "<|eot_id|>"
+            "<|eot_id|>",
+            "<start_of_image>",
+            "<image_soft_token>"
         ]
         self.explicitSpecialTokenIDs = Set(explicitSpecialTokens.compactMap { rawTokenizer.model.vocab[$0] })
         self.orderedSpecialTokens = explicitSpecialTokens
@@ -163,8 +165,12 @@ final class GemmaBPETokenizer: @unchecked Sendable {
                 flushBytes()
                 continue
             }
-            if let byte = Self.parseByteFallbackToken(token) {
+            if let byte = Self.parseByteToken(token) {
                 byteBuffer.append(byte)
+                continue
+            }
+            if token.count == 1, let scalar = token.unicodeScalars.first, scalar.value <= 0xFF {
+                byteBuffer.append(UInt8(scalar.value))
                 continue
             }
             flushBytes()
@@ -172,7 +178,7 @@ final class GemmaBPETokenizer: @unchecked Sendable {
         }
 
         flushBytes()
-        return text.replacingOccurrences(of: "▁", with: " ")
+        return text
     }
 
     private func matchSpecialToken(in text: String, at index: String.Index) -> (id: Int, endIndex: String.Index)? {
@@ -189,101 +195,69 @@ final class GemmaBPETokenizer: @unchecked Sendable {
             return []
         }
 
-        let normalized = text.replacingOccurrences(of: " ", with: "▁")
-        if normalized.isEmpty {
-            return []
-        }
-
-        var tokenIDs: [Int] = []
-        for piece in bpe(normalized) {
-            if let tokenID = self.vocab[piece] {
-                tokenIDs.append(tokenID)
-                continue
-            }
-
-            for byte in piece.utf8 {
-                let byteToken = String(format: "<0x%02X>", byte)
-                tokenIDs.append(self.vocab[byteToken] ?? self.unknownTokenID)
-            }
-        }
-        return tokenIDs
+        let tokens = byteTokens(from: text)
+        let merged = bpe(tokens)
+        return merged.map { self.vocab[$0] ?? self.unknownTokenID }
     }
 
-    private func bpe(_ token: String) -> [String] {
-        if let cached = self.bpeCache[token] {
+    private func byteTokens(from text: String) -> [String] {
+        var tokens: [String] = []
+        tokens.reserveCapacity(text.utf8.count)
+        for byte in text.utf8 {
+            if let scalar = UnicodeScalar(Int(byte)) {
+                let char = String(scalar)
+                if self.vocab[char] != nil {
+                    tokens.append(char)
+                    continue
+                }
+            }
+            tokens.append(Self.byteFallbackToken(byte))
+        }
+        return tokens
+    }
+
+    private func bpe(_ tokens: [String]) -> [String] {
+        guard tokens.count > 1 else {
+            return tokens
+        }
+
+        let cacheKey = tokens.joined(separator: " ")
+        if let cached = self.bpeCache[cacheKey] {
             return cached
         }
 
-        var word = token.map { String($0) }
-        if word.count <= 1 {
-            self.bpeCache[token] = word
-            return word
-        }
-
-        while true {
-            var bestRank: Int?
-            var bestFirst = ""
-            var bestSecond = ""
-
-            if word.count < 2 {
-                break
-            }
-
+        var word = tokens
+        while word.count >= 2 {
+            var bestRank = Int.max
+            var bestIndex: Int? = nil
             for index in 0..<(word.count - 1) {
-                let first = word[index]
-                let second = word[index + 1]
-                let pair = "\(first) \(second)"
-                guard let rank = self.mergeRanks[pair] else {
-                    continue
-                }
-                if bestRank == nil || rank < bestRank! {
+                let pair = "\(word[index]) \(word[index + 1])"
+                if let rank = self.mergeRanks[pair], rank < bestRank {
                     bestRank = rank
-                    bestFirst = first
-                    bestSecond = second
+                    bestIndex = index
                 }
             }
 
-            guard bestRank != nil else {
+            guard let index = bestIndex else {
                 break
             }
-
-            var merged: [String] = []
-            merged.reserveCapacity(word.count)
-            var cursor = 0
-            while cursor < word.count {
-                if cursor < word.count - 1,
-                   word[cursor] == bestFirst,
-                   word[cursor + 1] == bestSecond
-                {
-                    merged.append(bestFirst + bestSecond)
-                    cursor += 2
-                } else {
-                    merged.append(word[cursor])
-                    cursor += 1
-                }
-            }
-
-            word = merged
-            if word.count == 1 {
-                break
-            }
+            word[index] = word[index] + word[index + 1]
+            word.remove(at: index + 1)
         }
 
-        self.bpeCache[token] = word
+        self.bpeCache[cacheKey] = word
         return word
     }
 
-    private static func parseByteFallbackToken(_ token: String) -> UInt8? {
-        guard token.count == 6,
-              token.hasPrefix("<0x"),
-              token.hasSuffix(">")
-        else {
+    private static func byteFallbackToken(_ byte: UInt8) -> String {
+        String(format: "<0x%02X>", byte)
+    }
+
+    private static func parseByteToken(_ token: String) -> UInt8? {
+        guard token.hasPrefix("<0x"), token.hasSuffix(">"), token.count == 6 else {
             return nil
         }
-
-        let start = token.index(token.startIndex, offsetBy: 3)
-        let end = token.index(token.endIndex, offsetBy: -1)
-        let hex = String(token[start..<end])
+        let hex = token.dropFirst(3).dropLast(1)
         return UInt8(hex, radix: 16)
     }
 }

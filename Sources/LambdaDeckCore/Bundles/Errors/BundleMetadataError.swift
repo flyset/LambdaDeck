@@ -27,7 +27,7 @@ public enum LambdaDeckBundleMetadataError: Error, LocalizedError, Equatable, Sen
         case .unsupportedAdapterKind(let kind):
             return "Unsupported bundle adapter kind '\(kind)'. Supported: coreml.monolithic."
         case .unsupportedPromptFormat(let format):
-            return "Unsupported prompt.format '\(format)'. Supported: chat_transcript, gemma3_turns."
+            return "Unsupported prompt.format '\(format)'. Supported: chat_transcript, gemma3_turns, chatml."
         case .missingMonolithicModelPath:
             return "Bundle metadata runtime.monolithic_model is required for coreml.monolithic adapter kind."
         case .missingTokenizerAssets(let path):

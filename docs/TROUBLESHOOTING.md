@@ -70,3 +70,17 @@
 - Retry chat on `503` with a short backoff while readiness is `warming_up`.
 - Reduce the size of mostly-static system prompts (for example large agent instructions or embedded repo docs).
 - Sanity check with a minimal prompt to separate "prompt size" issues from runtime load issues.
+
+### NEW: STARTUP STRATEGY DIAGNOSTICS
+
+On startup, LambdaDeck logs the active tokenizer/prompt strategy selection when a model path is provided:
+
+```text
+startup: runtime strategy tokenizer=<...> prompt=<...> system_policy=<...> fallback=<true|false>
+```
+
+If bundle metadata included unsupported values, LambdaDeck logs warnings:
+
+```text
+startup: metadata warning (<message>)
+```
